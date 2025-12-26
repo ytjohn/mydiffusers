@@ -49,8 +49,9 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Ignore line length in UI file (embedded HTML/CSS/JS)
+# Ignore line length and ambiguous characters in UI files (embedded HTML/CSS/JS)
 "src/mydiffuser/server/ui.py" = ["E501"]
+"src/mydiffuser/server/browse_ui.py" = ["E501", "RUF001"]
 
 [tool.mypy]
 python_version = "3.12"

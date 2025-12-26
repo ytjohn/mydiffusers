@@ -22,7 +22,7 @@ router = APIRouter()
 
 def _generate_and_save(req: GenerateImageRequest) -> tuple[dict, str, Path, Path]:
     """Shared logic: applies preset, runs inference, saves all files.
-    
+
     Returns:
         Tuple of (metadata_dict, run_id, run_dir_path, output_png_path)
     """
@@ -87,7 +87,7 @@ def _generate_and_save(req: GenerateImageRequest) -> tuple[dict, str, Path, Path
 @router.post("/generate", response_model=GenerateImageResponse)
 async def generate(req: GenerateImageRequest):
     """Generate an image and return metadata as JSON.
-    
+
     The image is saved to disk; response includes the path.
     """
     try:
@@ -117,7 +117,7 @@ async def generate(req: GenerateImageRequest):
 @router.post("/generate_image")
 async def generate_image(req: GenerateImageRequest):
     """Generate an image and return PNG bytes directly.
-    
+
     Response headers include X-Gen-Meta with generation metadata.
     Also saves the image and metadata to disk.
     """

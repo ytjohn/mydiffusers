@@ -44,6 +44,13 @@ def index():
         radial-gradient(ellipse at 80% 100%, rgba(63, 185, 80, 0.06) 0%, transparent 50%);
     }
 
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
     h1 {
       font-size: 1.5rem;
       font-weight: 600;
@@ -54,7 +61,17 @@ def index():
     .subtitle {
       color: var(--text-muted);
       font-size: 0.85rem;
-      margin-bottom: 24px;
+    }
+
+    .nav-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+
+    .nav-link:hover {
+      color: var(--accent-hover);
+      text-decoration: underline;
     }
 
     .container {
@@ -244,8 +261,13 @@ def index():
 </head>
 <body>
   <div class="container">
-    <h1>mydiffuser</h1>
-    <p class="subtitle">Z-Image Turbo • AMD ROCm</p>
+    <header>
+      <div>
+        <h1>mydiffuser</h1>
+        <p class="subtitle">Z-Image Turbo • AMD ROCm</p>
+      </div>
+      <a href="/browse" class="nav-link">Browse History →</a>
+    </header>
 
     <div class="grid">
       <div class="panel">
@@ -315,6 +337,40 @@ function numOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+// Parse query params and pre-fill form (for "Use as Template" flow)
+function loadFromQueryParams() {
+  const params = new URLSearchParams(window.location.search);
+
+  if (params.has("prompt")) {
+    document.getElementById("prompt").value = params.get("prompt");
+  }
+  if (params.has("preset")) {
+    document.getElementById("preset").value = params.get("preset");
+  }
+  if (params.has("seed")) {
+    document.getElementById("seed").value = params.get("seed");
+  }
+  if (params.has("height")) {
+    document.getElementById("height").value = params.get("height");
+  }
+  if (params.has("width")) {
+    document.getElementById("width").value = params.get("width");
+  }
+  if (params.has("steps")) {
+    document.getElementById("steps").value = params.get("steps");
+  }
+  if (params.has("guidance")) {
+    document.getElementById("guidance").value = params.get("guidance");
+  }
+
+  // Clear the query string from URL without reload (cleaner UX)
+  if (params.toString()) {
+    window.history.replaceState({}, "", "/");
+  }
+}
+
+loadFromQueryParams();
 
 btn.addEventListener("click", async () => {
   statusEl.textContent = "Generating...";

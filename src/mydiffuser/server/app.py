@@ -8,7 +8,8 @@ from mydiffuser import __version__
 from mydiffuser.config import configure_torch_backends, ensure_output_dirs
 from mydiffuser.generators.image import ImageGenerator
 from mydiffuser.server import state
-from mydiffuser.server.routes import health, image
+from mydiffuser.server.browse_ui import router as browse_ui_router
+from mydiffuser.server.routes import browse, health, image
 from mydiffuser.server.ui import router as ui_router
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,9 @@ def create_app() -> FastAPI:
     # Include route modules
     app.include_router(health.router, tags=["health"])
     app.include_router(image.router, tags=["image"])
+    app.include_router(browse.router, tags=["browse"])
     app.include_router(ui_router, tags=["ui"])
+    app.include_router(browse_ui_router, tags=["ui"])
 
     @app.on_event("startup")
     def startup():
