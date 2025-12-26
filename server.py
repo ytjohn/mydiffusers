@@ -3,12 +3,16 @@ from pathlib import Path
 from typing import Optional, Literal
 import logging
 import asyncio
+import os
 import io
 import json
 import uuid
 import shutil
 import subprocess
 
+# “Mem Efficient attention on Current AMD GPU is still experimental…”
+# disabling before numpty/torch imports
+os.environ["PYTORCH_SDP_BACKEND"] = "math"
 
 import numpy as np
 import torch
@@ -16,20 +20,27 @@ from diffusers import ZImagePipeline
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from pydantic import BaseModel, Field
-from PIL import Image
+from PIL import Image as PILImage
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---- Config ----
-DEVICE = "mps"
-
+DEVICE = "cuda"
+OUTPUT_TYPE = "pil"
 # Pick what is stable for you.
 # float32 is safest but slowest; bfloat16/float16 are faster but may be less stable.
-# DTYPE = torch.float32
-DTYPE = torch.bfloat16
-# DTYPE = torch.float16
+# DTYPE = torch.float32  # safest and slowesst
+DTYPE = torch.bfloat16  # faster and more memory efficient, but still slow
+# DTYPE = torch.float16  # faster but less stable - experienced actual crashes on "Memory access fault by GPU node-1 (Agent handle: 0x15eeb430) on address 0x7fe47cfe2000. Reason: Page not present or supervisor privilege."
+
+
+# Disable experimental spd and enable math instead
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
+
 
 OUTPUT_DIR = Path(__file__).parent / "outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -186,7 +197,7 @@ def apply_preset(req: GenerateRequest) -> dict:
     return base
 
 
-def run_inference(prompt: str, height: int, width: int, steps: int, guidance: float, seed: int) -> tuple[np.ndarray, float]:
+def run_inference(prompt: str, height: int, width: int, steps: int, guidance: float, seed: int, runid: str) -> tuple[PILImage.Image, float]:
     """
     Runs the pipeline and returns (img_np, seconds).
     img_np is float32/float16 etc in [0,1] ideally with shape (H, W, 3).
@@ -194,8 +205,8 @@ def run_inference(prompt: str, height: int, width: int, steps: int, guidance: fl
     assert pipe is not None
 
     t0 = time.time()
+    logger.info("phase: start, runid=%s", runid)
     gen = torch.Generator(DEVICE).manual_seed(seed)
-
     out = pipe(
         prompt=prompt,
         height=height,
@@ -203,20 +214,33 @@ def run_inference(prompt: str, height: int, width: int, steps: int, guidance: fl
         num_inference_steps=steps,
         guidance_scale=guidance,
         generator=gen,
-        output_type="np",
+        output_type=OUTPUT_TYPE,
     )
+
+    t1 = time.time()
+    logger.info("phase: pipe() done in %.2fs, runid=%s", t1 - t0, runid)
+    torch.cuda.synchronize()
+    t2 = time.time()
+    logger.info("phase: cuda.synchronize done in %.2fs, runid=%s", t2 - t1, runid)
     img = out.images[0]
+    t3 = time.time()
+    logger.info("phase: got images[0] in %.2fs, runid=%s", t3 - t2, runid)
+    # log total time
     dt = time.time() - t0
-
+    logger.info("phase: total done in %.2fs, runid=%s", dt, runid)
+    # t3 = time.time()
     # Fail loudly if NaN/Inf
-    if not np.isfinite(img).all():
-        raise HTTPException(
-            status_code=500,
-            detail="Non-finite values (NaN/Inf) in output; try float32, different seed, or smaller resolution.",
-        )
+    # if OUTPUT_TYPE == "np":
+    #     if not np.isfinite(img).all():
+    #         raise HTTPException(
+    #             status_code=500,
+    #             detail="Non-finite values (NaN/Inf) in output; try float32, different seed, or smaller resolution.",
+    #         )
 
-    # Clamp just in case there are minor out-of-range values
-    img = np.clip(img, 0.0, 1.0)
+    #     # Clamp just in case there are minor out-of-range values
+    #     img = np.clip(img, 0.0, 1.0)
+    #     t4 = time.time()
+    #     logger.info("phase: post-processing done in %.2fs", t4 - t3)
 
     return img, dt
 
@@ -240,19 +264,25 @@ def startup():
         low_cpu_mem_usage=False,
     ).to(DEVICE)
 
+    warmup_height = 832
+    warmup_width = 832
+    num_inference_steps = 4
+    guidance_scale = 0.0
+    # logger.info("pipe device: %s", next(pipe.parameters()).device)
     logger.info("Model loaded in %.2fs", time.time() - start_time)
-
+    logger.info("Running pipeline warmup... height=%d width=%d steps=%d guidance=%.2f", warmup_height, warmup_width, num_inference_steps, guidance_scale)
     # Warmup (keeps first real request snappy)
     warm0 = time.time()
     _ = pipe(
         prompt="warmup",
-        height=512,
-        width=512,
-        num_inference_steps=2,
-        guidance_scale=0.0,
+        height=warmup_height,
+        width=warmup_width,
+        num_inference_steps=num_inference_steps,
+        guidance_scale=guidance_scale,
         generator=torch.Generator(DEVICE).manual_seed(0),
-        output_type="np",
+        output_type="pil",  # see next step
     )
+    torch.cuda.synchronize()
     logger.info("Pipeline warmup completed in %.2fs", time.time() - warm0)
 
 
@@ -303,10 +333,13 @@ def generate_and_save(req: GenerateRequest) -> tuple[np.ndarray, dict, str, Path
         steps=params["num_inference_steps"],
         guidance=params["guidance_scale"],
         seed=req.seed,
+        runid=rid,
     )
 
     out_path = rd / "output.png"
-    Image.fromarray((img * 255).round().astype("uint8")).save(out_path)
+    img.save(out_path)   # <-- PIL save
+
+    # Image.fromarray((img * 255).round().astype("uint8")).save(out_path)
 
     saved_rel = str(out_path.relative_to(Path(__file__).parent))
     logger.info("Saved %s in %.2fs", saved_rel, dt)
@@ -364,7 +397,9 @@ async def generate_image(req: GenerateRequest):
     async with infer_lock:
         img, meta, rid, rd, out_path = generate_and_save(req)
 
-    png = np_to_png_bytes(img)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png = buf.getvalue()
 
     return Response(
         content=png,
