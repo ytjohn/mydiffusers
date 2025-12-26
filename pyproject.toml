@@ -1,7 +1,7 @@
 [project]
 name = "mydiffuser"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Image and video generation server for AMD GPUs"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,3 +15,58 @@ dependencies = [
     "transformers>=4.57.3",
     "uvicorn>=0.40.0",
 ]
+
+[project.scripts]
+mydiffuser = "mydiffuser.server.app:create_app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mydiffuser"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+    "RUF",    # Ruff-specific rules
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore line length in UI file (embedded HTML/CSS/JS)
+"src/mydiffuser/server/ui.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+# Less strict for hobby project - enable stricter checks as needed
+strict = false
+warn_return_any = false
+warn_unused_ignores = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+mypy_path = "src"
+packages = ["mydiffuser"]
+
+[[tool.mypy.overrides]]
+module = [
+    "diffusers.*",
+    "torch.*",
+    "PIL.*",
+]
+ignore_missing_imports = true

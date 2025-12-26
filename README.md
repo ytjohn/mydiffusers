@@ -1,43 +1,188 @@
+# mydiffuser
 
-Need rocm7.0 for 395+ support.
+Image and video generation server optimized for AMD GPUs (ROCm).
 
-```shell
-python - <<'PY'
-import torch
-print("hip:", torch.version.hip)
-print("arch list:", getattr(torch.cuda, "get_arch_list", lambda: None)())
-print("device:", torch.cuda.get_device_name(0))
-PY
-hip: 6.3.42134-a9a80e791
-/opt/amdgpu/share/libdrm/amdgpu.ids: No such file or directory
-arch list: ['gfx900', 'gfx906', 'gfx908', 'gfx90a', 'gfx942', 'gfx1030', 'gfx1100', 'gfx1101', 'gfx1102', 'gfx1200', 'gfx1201']
-device: AMD Radeon 8060S
+Currently supports **Z-Image-Turbo** for text-to-image generation, with video generation planned.
+
+## Requirements
+
+- Python 3.12+
+- AMD GPU with ROCm support (tested on AMD Max+ 395 / gfx1201)
+- PyTorch with ROCm (nightly recommended for latest GPU support)
+
+## Quick Start
+
+```bash
+# Clone and enter project
+cd mydiffuser
+
+# Create virtual environment
+uv venv
+source .venv/bin/activate
+
+# Install PyTorch with ROCm (nightly for gfx1201 support)
+
+# This MUST be done before doing a uv sync or pip install. 
+
+uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+
+# Install the project in editable mode
+uv pip install -e .
+
+# Run the server
+python scripts/run_server.py
 ```
 
-```shell
-mydiffuser main  ? ✗ uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+The server starts at `http://localhost:8000`. Open it in a browser for the web UI.
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Web UI for interactive generation |
+| `/health` | GET | Server status and configuration |
+| `/generate` | POST | Generate image, return JSON metadata |
+| `/generate_image` | POST | Generate image, return PNG bytes |
+
+### Example API Call
+
+```bash
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "A photorealistic cat wearing a tiny hat",
+    "preset": "draft",
+    "seed": 42
+  }'
 ```
 
+## Configuration
 
+### Generation Presets
+
+Edit `src/mydiffuser/utils/presets.py` to customize presets:
+
+```python
+PRESETS = {
+    "draft": {
+        "height": 832,          # Smaller for faster iteration
+        "width": 832,
+        "num_inference_steps": 4,
+        "guidance_scale": 0.0,  # 0.0 for turbo models
+    },
+    "final": {
+        "height": 1024,         # Higher resolution
+        "width": 1024,
+        "num_inference_steps": 8,
+        "guidance_scale": 0.0,
+    },
+}
+```
+
+**Parameters:**
+- `height` / `width`: Output dimensions (must be multiples of 8, range 256-2048)
+- `num_inference_steps`: More steps = better quality but slower (4-12 typical for turbo)
+- `guidance_scale`: Classifier-free guidance (use 0.0 for Z-Image-Turbo)
+
+### Device & Performance Settings
+
+Edit `src/mydiffuser/config.py`:
+
+```python
+# Device settings
+DEVICE = "cuda"           # ROCm uses cuda API
+DTYPE = torch.bfloat16    # Options: float32 (slow/safe), bfloat16 (balanced), float16 (fast/risky)
+
+# Warmup settings (adjust if you want faster startup at cost of first-request latency)
+WARMUP_HEIGHT = 832
+WARMUP_WIDTH = 832
+WARMUP_STEPS = 4
+```
+
+**dtype recommendations:**
+- `torch.float32`: Safest, slowest. Use if you get NaN/crashes.
+- `torch.bfloat16`: Good balance of speed and stability (recommended for gfx1201)
+- `torch.float16`: Fastest but may cause memory faults on some workloads
+
+## Output Structure
+
+Generated images are saved to `outputs/run/image/`:
 
 ```
-INFO:server:Pipeline warmup completed in 100.71s
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:51110 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51110 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:server:Generate preset=draft h=832 w=832 steps=4 guidance=0.00 seed=42
-100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:13<00:00,  3.42s/it]
-
-INFO:server:Saved outputs/run/image/c548c38d-5429-4495-995a-c547284e3bbd/output.png in 287.21s
-INFO:     127.0.0.1:56054 - "POST /generate_image HTTP/1.1" 200 OK
-INFO:server:Generate preset=draft h=832 w=832 steps=4 guidance=0.00 seed=89
-100%|█████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:13<00:00,  3.39s/it]
-INFO:server:Saved outputs/run/image/a974d365-a7d4-4bd8-a3e2-17ed75aefeea/output.png in 18.58s
-INFO:     127.0.0.1:35644 - "POST /generate_image HTTP/1.1" 200 OK
-
-
-INFO:server:Generate preset=final h=1024 w=1024 steps=9 guidance=1.00 seed=42
-100%|█████████████████████████████████████████████████████████████████████████████████████████| 9/9 [01:21<00:00,  9.05s/it]
-^C^C^C^CINFO:server:Saved outputs/run/image/076857b3-7bd5-4a6a-a8b7-89cd310e4a0f/output.png in 486.22s
+outputs/
+└── run/
+    └── image/
+        └── 20251225-221530-a1b2c3d4/    # Timestamp + short UUID
+            ├── output.png               # Generated image
+            ├── prompt.txt               # Input prompt
+            ├── request.json             # Full API request
+            ├── resolved.json            # Resolved parameters (preset + overrides)
+            └── meta.json                # Generation metadata (time, device, etc.)
 ```
+
+Run IDs are time-ordered (format: `YYYYMMDD-HHMMSS-<uuid8>`) so they sort chronologically.
+
+## Project Structure
+
+```
+mydiffuser/
+├── src/mydiffuser/
+│   ├── config.py              # Device, paths, model settings
+│   ├── generators/
+│   │   ├── base.py            # Abstract generator class
+│   │   ├── image.py           # Z-Image-Turbo text-to-image
+│   │   ├── img2img.py         # (placeholder)
+│   │   └── video/             # (placeholder for SVD, etc.)
+│   ├── models/
+│   │   ├── requests.py        # Pydantic request models
+│   │   └── responses.py       # Pydantic response models
+│   ├── server/
+│   │   ├── app.py             # FastAPI app factory
+│   │   ├── state.py           # Global state (loaded model)
+│   │   ├── ui.py              # Web UI
+│   │   └── routes/
+│   │       ├── health.py      # /health endpoint
+│   │       ├── image.py       # /generate, /generate_image
+│   │       └── video.py       # (placeholder)
+│   └── utils/
+│       ├── paths.py           # Run directory management
+│       └── presets.py         # Generation presets ← EDIT THIS
+├── scripts/
+│   └── run_server.py          # Entry point
+├── outputs/                   # Generated images (gitignored)
+└── archive/                   # Old experimental files
+```
+
+## Development
+
+```bash
+# Install dev dependencies
+uv pip install -e ".[dev]"
+
+# Run linter
+ruff check src/
+
+# Run type checker
+mypy src/mydiffuser
+
+# Auto-fix lint issues
+ruff check src/ --fix
+```
+
+## Troubleshooting
+
+### "Memory access fault by GPU"
+- Try changing `DTYPE` to `torch.float32` in `config.py`
+- Reduce image dimensions in presets
+
+### First request is slow
+- This is normal - the model warms up on first inference
+- Subsequent requests will be much faster
+
+### Module not found errors
+- Make sure you've installed the package: `uv pip install -e .`
+- Or run via script: `python scripts/run_server.py`
+
+## License
+
+MIT
