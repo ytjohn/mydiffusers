@@ -3,15 +3,15 @@ name = "mydiffuser"
 version = "0.2.0"
 description = "Image and video generation server for AMD GPUs"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12"  
 dependencies = [
     "accelerate>=1.12.0",
     "diffusers>=0.36.0",
     "fastapi>=0.127.0",
+    "ftfy>=6.3.0",
+    "imageio[ffmpeg]>=2.34.0",
     "numpy>=2.4.0",
     "pillow>=12.0.0",
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
     "transformers>=4.57.3",
     "uvicorn>=0.40.0",
 ]
@@ -33,29 +33,21 @@ dev = [
     "mypy>=1.10.0",
 ]
 
+
 [tool.ruff]
 target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
-select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # Pyflakes
-    "I",      # isort
-    "B",      # flake8-bugbear
-    "UP",     # pyupgrade
-    "RUF",    # Ruff-specific rules
-]
+select = ["E","W","F","I","B","UP","RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-# Ignore line length and ambiguous characters in UI files (embedded HTML/CSS/JS)
 "src/mydiffuser/server/ui.py" = ["E501"]
 "src/mydiffuser/server/browse_ui.py" = ["E501", "RUF001"]
+"src/mydiffuser/server/video_ui.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-# Less strict for hobby project - enable stricter checks as needed
 strict = false
 warn_return_any = false
 warn_unused_ignores = true
@@ -69,5 +61,7 @@ module = [
     "diffusers.*",
     "torch.*",
     "PIL.*",
+    "imageio",
+    "imageio.*",
 ]
 ignore_missing_imports = true

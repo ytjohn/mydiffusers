@@ -63,6 +63,11 @@ def index():
       font-size: 0.85rem;
     }
 
+    .nav-links {
+      display: flex;
+      gap: 16px;
+    }
+
     .nav-link {
       color: var(--accent);
       text-decoration: none;
@@ -257,6 +262,29 @@ def index():
     .generating .placeholder {
       animation: pulse 1.5s ease-in-out infinite;
     }
+
+    .loading-banner {
+      background: linear-gradient(90deg, rgba(88, 166, 255, 0.15), rgba(63, 185, 80, 0.1));
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .loading-banner.visible {
+      display: block;
+    }
+
+    .loading-banner .title {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .loading-banner .desc {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
@@ -266,8 +294,16 @@ def index():
         <h1>mydiffuser</h1>
         <p class="subtitle">Z-Image Turbo • AMD ROCm</p>
       </div>
-      <a href="/browse" class="nav-link">Browse History →</a>
+      <div class="nav-links">
+        <a href="/video" class="nav-link">Video →</a>
+        <a href="/browse" class="nav-link">Browse →</a>
+      </div>
     </header>
+
+    <div id="loadingBanner" class="loading-banner">
+      <div class="title">⏳ Model not loaded</div>
+      <div class="desc">First generation will take 30-60s to load the model.</div>
+    </div>
 
     <div class="grid">
       <div class="panel">
@@ -278,22 +314,22 @@ def index():
           <div>
             <label>Preset</label>
             <select id="preset">
-              <option value="draft" selected>draft</option>
-              <option value="final">final</option>
+              <option value="draft">draft (480p)</option>
+              <option value="final" selected>final (720p)</option>
               <option value="custom">custom</option>
+            </select>
+          </div>
+          <div>
+            <label>Aspect</label>
+            <select id="aspect">
+              <option value="landscape" selected>Landscape 16:9</option>
+              <option value="portrait">Portrait 9:16</option>
+              <option value="square">Square 1:1</option>
             </select>
           </div>
           <div>
             <label>Seed</label>
             <input id="seed" type="number" value="42" min="0" />
-          </div>
-          <div>
-            <label>Height</label>
-            <input id="height" type="number" placeholder="preset" />
-          </div>
-          <div>
-            <label>Width</label>
-            <input id="width" type="number" placeholder="preset" />
           </div>
           <div>
             <label>Steps</label>
@@ -348,14 +384,11 @@ function loadFromQueryParams() {
   if (params.has("preset")) {
     document.getElementById("preset").value = params.get("preset");
   }
+  if (params.has("aspect")) {
+    document.getElementById("aspect").value = params.get("aspect");
+  }
   if (params.has("seed")) {
     document.getElementById("seed").value = params.get("seed");
-  }
-  if (params.has("height")) {
-    document.getElementById("height").value = params.get("height");
-  }
-  if (params.has("width")) {
-    document.getElementById("width").value = params.get("width");
   }
   if (params.has("steps")) {
     document.getElementById("steps").value = params.get("steps");
@@ -372,7 +405,27 @@ function loadFromQueryParams() {
 
 loadFromQueryParams();
 
+// Check model loading status on page load
+async function checkModelStatus() {
+  try {
+    const resp = await fetch("/health");
+    const data = await resp.json();
+    const banner = document.getElementById("loadingBanner");
+
+    // Show banner if lazy loading is enabled and image model not loaded
+    if (data.lazy_loading && !data.models?.image?.loaded) {
+      banner.classList.add("visible");
+    }
+  } catch (e) {
+    console.warn("Failed to check model status:", e);
+  }
+}
+
+checkModelStatus();
+
 btn.addEventListener("click", async () => {
+  // Hide the loading banner once user starts generating
+  document.getElementById("loadingBanner").classList.remove("visible");
   statusEl.textContent = "Generating...";
   statusEl.className = "status generating";
   metaEl.textContent = "—";
@@ -385,9 +438,8 @@ btn.addEventListener("click", async () => {
   const req = {
     prompt: document.getElementById("prompt").value,
     preset: document.getElementById("preset").value,
+    aspect_ratio: document.getElementById("aspect").value,
     seed: Number(document.getElementById("seed").value) || 0,
-    height: numOrNull(document.getElementById("height").value),
-    width: numOrNull(document.getElementById("width").value),
     num_inference_steps: numOrNull(document.getElementById("steps").value),
     guidance_scale: numOrNull(document.getElementById("guidance").value),
   };

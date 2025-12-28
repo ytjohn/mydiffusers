@@ -3,16 +3,27 @@
 import io
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from mydiffuser.config import DEVICE, DTYPE, PROJECT_ROOT
+from mydiffuser.config import DEVICE, DTYPE, IMAGE_MODEL_ID, LAZY_LOADING, PROJECT_ROOT
 from mydiffuser.models.requests import GenerateImageRequest
 from mydiffuser.models.responses import GenerateImageResponse
-from mydiffuser.server.state import get_image_generator, get_infer_lock
-from mydiffuser.utils.paths import new_run_id, run_dir, write_json, write_text
+from mydiffuser.server.state import (
+    ensure_image_generator,
+    get_image_generator,
+    get_infer_lock,
+)
+from mydiffuser.utils.paths import (
+    generate_thumbnail,
+    new_run_id,
+    run_dir,
+    write_json,
+    write_text,
+)
 from mydiffuser.utils.presets import apply_preset
 
 logger = logging.getLogger(__name__)
@@ -31,15 +42,15 @@ def _generate_and_save(req: GenerateImageRequest) -> tuple[dict, str, Path, Path
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
-    generator = get_image_generator()
+    # In lazy loading mode, this will load the model if needed (and swap out video)
+    generator = ensure_image_generator() if LAZY_LOADING else get_image_generator()
 
-    # Create run ID and directory
+    # Create run ID and directory (unified structure - no type subfolder)
     rid = new_run_id()
-    rd = run_dir("image", rid)
+    rd = run_dir(rid)  # New unified path
 
     # Save inputs
     write_json(rd / "request.json", req.model_dump())
-    write_json(rd / "resolved.json", {**params, "seed": req.seed, "preset": req.preset})
     write_text(rd / "prompt.txt", req.prompt)
 
     logger.info(
@@ -65,10 +76,41 @@ def _generate_and_save(req: GenerateImageRequest) -> tuple[dict, str, Path, Path
     out_path = rd / "output.png"
     img.save(out_path)
 
+    # Generate thumbnail at save time
+    thumb_path = rd / "thumb.jpg"
+    generate_thumbnail(out_path, thumb_path)
+
     saved_rel = str(out_path.relative_to(PROJECT_ROOT))
     logger.info("Saved %s in %.2fs", saved_rel, dt)
 
+    # Build unified meta.json with type field
     meta = {
+        "type": "image",
+        "run_id": rid,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "prompt": req.prompt,
+        "source_run_id": None,
+        "backend": IMAGE_MODEL_ID,
+        "params": {
+            "preset": req.preset,
+            "seed": req.seed,
+            "height": params["height"],
+            "width": params["width"],
+            "num_inference_steps": params["num_inference_steps"],
+            "guidance_scale": params["guidance_scale"],
+        },
+        "outputs": {
+            "image": "output.png",
+            "thumb": "thumb.jpg",
+        },
+        "device": DEVICE,
+        "dtype": str(DTYPE),
+        "seconds_elapsed": dt,
+    }
+    write_json(rd / "meta.json", meta)
+
+    # Return flattened meta for API response compatibility
+    flat_meta = {
         "seconds": dt,
         "seed": req.seed,
         "preset": req.preset,
@@ -79,9 +121,8 @@ def _generate_and_save(req: GenerateImageRequest) -> tuple[dict, str, Path, Path
         "device": DEVICE,
         "dtype": str(DTYPE),
     }
-    write_json(rd / "meta.json", meta)
 
-    return meta, rid, rd, out_path
+    return flat_meta, rid, rd, out_path
 
 
 @router.post("/generate", response_model=GenerateImageResponse)
@@ -90,12 +131,14 @@ async def generate(req: GenerateImageRequest):
 
     The image is saved to disk; response includes the path.
     """
-    try:
-        generator = get_image_generator()
-        if not generator.is_loaded:
-            raise HTTPException(status_code=503, detail="Model not loaded")
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Model not loaded") from None
+    # In lazy loading mode, the model will be loaded during generation
+    if not LAZY_LOADING:
+        try:
+            generator = get_image_generator()
+            if not generator.is_loaded:
+                raise HTTPException(status_code=503, detail="Model not loaded")
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="Model not loaded") from None
 
     async with get_infer_lock():
         meta, rid, rd, out_path = _generate_and_save(req)
@@ -121,12 +164,14 @@ async def generate_image(req: GenerateImageRequest):
     Response headers include X-Gen-Meta with generation metadata.
     Also saves the image and metadata to disk.
     """
-    try:
-        generator = get_image_generator()
-        if not generator.is_loaded:
-            raise HTTPException(status_code=503, detail="Model not loaded")
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Model not loaded") from None
+    # In lazy loading mode, the model will be loaded during generation
+    if not LAZY_LOADING:
+        try:
+            generator = get_image_generator()
+            if not generator.is_loaded:
+                raise HTTPException(status_code=503, detail="Model not loaded")
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="Model not loaded") from None
 
     async with get_infer_lock():
         meta, _, _, out_path = _generate_and_save(req)

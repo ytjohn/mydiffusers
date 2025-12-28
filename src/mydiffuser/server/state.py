@@ -1,26 +1,245 @@
 """Shared server state to avoid circular imports."""
 
 import asyncio
-from typing import TYPE_CHECKING
+import gc
+import logging
+import threading
+from typing import TYPE_CHECKING, Literal
+
+import torch
+
+from mydiffuser.config import LAZY_LOADING
 
 if TYPE_CHECKING:
     from mydiffuser.generators.image import ImageGenerator
+    from mydiffuser.generators.video.wan import WanVideoGenerator
 
-# Global generator instance (loaded at startup)
+logger = logging.getLogger(__name__)
+
+# Global generator instances (loaded at startup or on-demand)
 image_generator: "ImageGenerator | None" = None
+video_generator: "WanVideoGenerator | None" = None
+
+# Track which model type is currently loaded (for lazy loading)
+_active_model: Literal["image", "video", None] = None
 
 # Lock to serialize inference (GPU can only do one at a time)
 infer_lock = asyncio.Lock()
 
+# Shutdown flag - checked during long operations
+# Use threading.Event since it's thread-safe and works across sync/async
+_shutdown_event = threading.Event()
+
+
+def _unload_all_models() -> None:
+    """Unload all models and free GPU memory aggressively.
+
+    This performs multiple rounds of garbage collection and cache clearing
+    to ensure all GPU memory is released before loading a new model.
+    """
+    global image_generator, video_generator, _active_model
+
+    if image_generator is not None:
+        logger.info("Unloading image generator...")
+        image_generator.unload()  # Properly unload (moves to CPU, deletes, gc)
+        image_generator = None
+
+    if video_generator is not None:
+        logger.info("Unloading video generator...")
+        video_generator.unload()  # Properly unload (moves to CPU, deletes, gc)
+        video_generator = None
+
+    _active_model = None
+
+    # Aggressive memory cleanup - multiple rounds
+    # This helps with memory fragmentation on AMD ROCm
+    if torch.cuda.is_available():
+        # First round
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+        # Second round - catches any lazy deallocations
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+        # Third round with IPC collect if available
+        gc.collect()
+        torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()  # Collect IPC memory
+        except AttributeError:
+            pass  # Not available on all PyTorch versions
+        torch.cuda.synchronize()
+
+        # Report memory status
+        import time
+        time.sleep(0.5)  # Brief pause to let GPU settle
+        free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+        total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+        logger.info(
+            "GPU memory after cleanup: %.1f GiB free / %.1f GiB total",
+            free_mem, total_mem
+        )
+    else:
+        gc.collect()
+
+    logger.info("GPU memory cleared")
+
+
+def ensure_image_generator() -> "ImageGenerator":
+    """Get the image generator, loading it if necessary (lazy loading).
+
+    In lazy loading mode, this will unload the video generator first
+    to free GPU memory. Warmup is skipped since the first real request
+    serves the same purpose.
+    """
+    global image_generator, _active_model
+
+    if image_generator is not None and image_generator.is_loaded:
+        return image_generator
+
+    # In lazy mode, unload other models first
+    if LAZY_LOADING and _active_model == "video":
+        logger.info("Lazy loading: swapping video → image model")
+        _unload_all_models()
+
+    # Load the image generator (skip warmup - first request is the warmup)
+    from mydiffuser.generators.image import ImageGenerator
+
+    logger.info("Loading image generator (lazy, no warmup)...")
+    image_generator = ImageGenerator()
+    image_generator.load_model()
+    # Skip warmup in lazy mode - the real request will be the first inference
+    _active_model = "image"
+    logger.info("Image generator ready")
+
+    return image_generator
+
+
+def ensure_video_generator(model_id: str | None = None) -> "WanVideoGenerator":
+    """Get the video generator, loading it if necessary (lazy loading).
+
+    In lazy loading mode, this will unload the image generator first
+    to free GPU memory. Warmup is skipped since the first real request
+    serves the same purpose.
+
+    Args:
+        model_id: Optional model ID to load. If the current generator has a
+            different model loaded, it will be swapped. Defaults to VIDEO_MODEL_ID.
+    """
+    global video_generator, _active_model
+
+    from mydiffuser.config import VIDEO_MODEL_ID
+
+    target_model = model_id or VIDEO_MODEL_ID
+
+    # Check if we already have the right model loaded
+    if video_generator is not None and video_generator.is_loaded:
+        if video_generator.model_id == target_model:
+            return video_generator
+        else:
+            # Different model requested, need to swap
+            logger.info(
+                "Video model swap: %s → %s",
+                video_generator.model_id, target_model
+            )
+            _unload_all_models()
+
+    # In lazy mode, unload other models first
+    if LAZY_LOADING and _active_model == "image":
+        logger.info("Lazy loading: swapping image → video model")
+        _unload_all_models()
+
+    # Load the video generator (skip warmup - first request is the warmup)
+    from mydiffuser.generators.video.wan import WanVideoGenerator
+
+    logger.info("Loading video generator (lazy, no warmup): %s", target_model)
+    video_generator = WanVideoGenerator(model_id=target_model)
+    video_generator.load_model()
+    # Skip warmup in lazy mode - the real request will be the first inference
+    _active_model = "video"
+    logger.info("Video generator ready")
+
+    return video_generator
+
 
 def get_image_generator() -> "ImageGenerator":
-    """Get the loaded image generator instance."""
+    """Get the loaded image generator instance.
+
+    Use ensure_image_generator() for lazy loading support.
+    """
     if image_generator is None:
         raise RuntimeError("Image generator not loaded")
     return image_generator
+
+
+def get_video_generator() -> "WanVideoGenerator":
+    """Get the loaded video generator instance.
+
+    Use ensure_video_generator() for lazy loading support.
+    """
+    if video_generator is None:
+        raise RuntimeError("Video generator not loaded")
+    return video_generator
 
 
 def get_infer_lock() -> asyncio.Lock:
     """Get the inference lock for serializing GPU access."""
     return infer_lock
 
+
+def get_active_model() -> Literal["image", "video", None]:
+    """Get the currently active model type."""
+    return _active_model
+
+
+def unload_all_models() -> dict:
+    """Public API to unload all models and free GPU memory.
+
+    Returns a dict with status and memory info.
+    """
+    _unload_all_models()
+
+    result = {"status": "ok", "message": "All models unloaded"}
+
+    if torch.cuda.is_available():
+        free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+        total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+        result["gpu_memory"] = {
+            "free_gib": round(free_mem, 1),
+            "total_gib": round(total_mem, 1),
+        }
+
+    return result
+
+
+def request_shutdown() -> None:
+    """Signal that shutdown has been requested."""
+    _shutdown_event.set()
+
+
+def is_shutdown_requested() -> bool:
+    """Check if shutdown has been requested."""
+    return _shutdown_event.is_set()
+
+
+def check_shutdown() -> None:
+    """Raise an exception if shutdown was requested.
+
+    Call this at safe points during long operations to allow
+    graceful interruption.
+    """
+    if _shutdown_event.is_set():
+        raise ShutdownRequested("Server shutdown requested")
+
+
+def reset_shutdown() -> None:
+    """Reset the shutdown flag (for testing)."""
+    _shutdown_event.clear()
+
+
+class ShutdownRequested(Exception):
+    """Raised when a shutdown is requested during a long operation."""
+    pass

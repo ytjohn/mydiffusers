@@ -28,6 +28,9 @@ def browse_page() -> HTMLResponse:
       --error: #f85149;
       --danger: #da3633;
       --danger-hover: #f85149;
+      --badge-image: #238636;
+      --badge-video: #8957e5;
+      --badge-img2img: #bf8700;
     }
 
     * {
@@ -81,6 +84,43 @@ def browse_page() -> HTMLResponse:
       text-decoration: underline;
     }
 
+    /* Filter tabs */
+    .filter-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .filter-tab {
+      padding: 8px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-tab:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .filter-tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--bg);
+    }
+
+    .filter-tab .count {
+      opacity: 0.7;
+      font-size: 0.75rem;
+      margin-left: 4px;
+    }
+
     .thumb-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -94,6 +134,7 @@ def browse_page() -> HTMLResponse:
       overflow: hidden;
       cursor: pointer;
       transition: border-color 0.15s, transform 0.1s;
+      position: relative;
     }
 
     .thumb-card:hover {
@@ -106,6 +147,33 @@ def browse_page() -> HTMLResponse:
       aspect-ratio: 1;
       object-fit: cover;
       background: var(--bg);
+    }
+
+    .thumb-badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .thumb-badge.image {
+      background: var(--badge-image);
+      color: white;
+    }
+
+    .thumb-badge.video {
+      background: var(--badge-video);
+      color: white;
+    }
+
+    .thumb-badge.img2img {
+      background: var(--badge-img2img);
+      color: white;
     }
 
     .thumb-info {
@@ -124,6 +192,12 @@ def browse_page() -> HTMLResponse:
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .thumb-lineage {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: 4px;
     }
 
     .pagination {
@@ -204,9 +278,38 @@ def browse_page() -> HTMLResponse:
       border-bottom: 1px solid var(--border);
     }
 
+    .modal-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
     .modal-title {
       font-size: 0.9rem;
       color: var(--text-muted);
+    }
+
+    .modal-type-badge {
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .modal-type-badge.image {
+      background: var(--badge-image);
+      color: white;
+    }
+
+    .modal-type-badge.video {
+      background: var(--badge-video);
+      color: white;
+    }
+
+    .modal-type-badge.img2img {
+      background: var(--badge-img2img);
+      color: white;
     }
 
     .modal-close {
@@ -237,6 +340,12 @@ def browse_page() -> HTMLResponse:
     }
 
     .modal-image {
+      width: 100%;
+      border-radius: 6px;
+      background: var(--bg);
+    }
+
+    .modal-video {
       width: 100%;
       border-radius: 6px;
       background: var(--bg);
@@ -296,10 +405,26 @@ def browse_page() -> HTMLResponse:
       margin-top: 2px;
     }
 
+    .source-link {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.8rem;
+      display: block;
+    }
+
+    .source-link:hover {
+      border-color: var(--accent);
+    }
+
     .modal-actions {
       display: flex;
       gap: 12px;
       padding-top: 8px;
+      flex-wrap: wrap;
     }
 
     .btn {
@@ -312,6 +437,7 @@ def browse_page() -> HTMLResponse:
       font-weight: 600;
       cursor: pointer;
       transition: background 0.15s;
+      min-width: 120px;
     }
 
     .btn-primary {
@@ -321,6 +447,15 @@ def browse_page() -> HTMLResponse:
 
     .btn-primary:hover {
       background: var(--accent-hover);
+    }
+
+    .btn-secondary {
+      background: var(--badge-video);
+      color: white;
+    }
+
+    .btn-secondary:hover {
+      opacity: 0.9;
     }
 
     .btn-danger {
@@ -349,6 +484,12 @@ def browse_page() -> HTMLResponse:
       <a href="/" class="nav-link">← Back to Generator</a>
     </header>
 
+    <div class="filter-tabs" id="filterTabs">
+      <button class="filter-tab active" data-type="all">All</button>
+      <button class="filter-tab" data-type="image">Images</button>
+      <button class="filter-tab" data-type="video">Videos</button>
+    </div>
+
     <div id="content">
       <div class="loading">Loading...</div>
     </div>
@@ -363,22 +504,32 @@ def browse_page() -> HTMLResponse:
   <div class="modal-overlay" id="modalOverlay">
     <div class="modal">
       <div class="modal-header">
-        <span class="modal-title" id="modalTitle"></span>
+        <div class="modal-header-left">
+          <span class="modal-title" id="modalTitle"></span>
+          <span class="modal-type-badge" id="modalTypeBadge"></span>
+        </div>
         <button class="modal-close" id="modalClose">×</button>
       </div>
       <div class="modal-body">
-        <img class="modal-image" id="modalImage" alt="" />
+        <div id="modalMediaContainer">
+          <img class="modal-image" id="modalImage" alt="" />
+        </div>
         <div class="modal-details">
           <div class="detail-section">
             <h3>Prompt</h3>
             <pre id="modalPrompt"></pre>
           </div>
+          <div class="detail-section" id="sourceSection" style="display: none;">
+            <h3>Source</h3>
+            <a class="source-link" id="sourceLink" href="#">View source run →</a>
+          </div>
           <div class="detail-section">
             <h3>Parameters</h3>
             <div class="params-grid" id="modalParams"></div>
           </div>
-          <div class="modal-actions">
+          <div class="modal-actions" id="modalActions">
             <button class="btn btn-primary" id="templateBtn">Use as Template</button>
+            <button class="btn btn-secondary" id="videoBtn" style="display: none;">Generate Video</button>
             <button class="btn btn-danger" id="deleteBtn">Delete</button>
           </div>
         </div>
@@ -388,8 +539,10 @@ def browse_page() -> HTMLResponse:
 
 <script>
 const LIMIT = 24;
-let currentOffset = 0;
+let currentPage = 1;
 let totalRuns = 0;
+let totalPages = 1;
+let currentFilter = "all";
 let currentRunId = null;
 let currentRunData = null;
 
@@ -398,25 +551,43 @@ const paginationEl = document.getElementById("pagination");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 const pageInfoEl = document.getElementById("pageInfo");
+const filterTabs = document.querySelectorAll(".filter-tab");
 
 const modalOverlay = document.getElementById("modalOverlay");
 const modalClose = document.getElementById("modalClose");
 const modalTitle = document.getElementById("modalTitle");
+const modalTypeBadge = document.getElementById("modalTypeBadge");
+const modalMediaContainer = document.getElementById("modalMediaContainer");
 const modalImage = document.getElementById("modalImage");
 const modalPrompt = document.getElementById("modalPrompt");
 const modalParams = document.getElementById("modalParams");
+const sourceSection = document.getElementById("sourceSection");
+const sourceLink = document.getElementById("sourceLink");
 const templateBtn = document.getElementById("templateBtn");
+const videoBtn = document.getElementById("videoBtn");
 const deleteBtn = document.getElementById("deleteBtn");
+
+// Filter tab handlers
+filterTabs.forEach(tab => {
+  tab.addEventListener("click", () => {
+    filterTabs.forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    currentFilter = tab.dataset.type;
+    currentPage = 1;
+    loadRuns();
+  });
+});
 
 async function loadRuns() {
   contentEl.innerHTML = '<div class="loading">Loading...</div>';
 
   try {
-    const resp = await fetch(`/api/runs?limit=${LIMIT}&offset=${currentOffset}`);
+    const resp = await fetch(`/api/runs?type=${currentFilter}&page=${currentPage}&limit=${LIMIT}`);
     if (!resp.ok) throw new Error("Failed to load runs");
 
     const data = await resp.json();
     totalRuns = data.total;
+    totalPages = data.pages;
 
     if (data.runs.length === 0) {
       contentEl.innerHTML = '<div class="empty-state">No generations yet. Go create something!</div>';
@@ -426,12 +597,19 @@ async function loadRuns() {
 
     let html = '<div class="thumb-grid">';
     for (const run of data.runs) {
+      const badgeClass = run.type || "image";
+      const lineageHtml = run.source_run_id
+        ? `<div class="thumb-lineage">from ${run.source_run_id.substring(0, 15)}...</div>`
+        : "";
+
       html += `
-        <div class="thumb-card" data-id="${run.id}">
+        <div class="thumb-card" data-id="${run.id}" data-type="${run.type}">
+          <span class="thumb-badge ${badgeClass}">${run.type}</span>
           <img class="thumb-img" src="/api/runs/${run.id}/thumb" alt="" loading="lazy" />
           <div class="thumb-info">
             <div class="thumb-timestamp">${run.timestamp}</div>
             <div class="thumb-prompt">${escapeHtml(run.prompt_preview) || "(no prompt)"}</div>
+            ${lineageHtml}
           </div>
         </div>
       `;
@@ -441,7 +619,7 @@ async function loadRuns() {
 
     // Add click handlers
     contentEl.querySelectorAll(".thumb-card").forEach(card => {
-      card.addEventListener("click", () => openModal(card.dataset.id));
+      card.addEventListener("click", () => openModal(card.dataset.id, card.dataset.type));
     });
 
     // Update pagination
@@ -453,9 +631,6 @@ async function loadRuns() {
 }
 
 function updatePagination() {
-  const totalPages = Math.ceil(totalRuns / LIMIT);
-  const currentPage = Math.floor(currentOffset / LIMIT) + 1;
-
   if (totalPages <= 1) {
     paginationEl.style.display = "none";
     return;
@@ -463,31 +638,49 @@ function updatePagination() {
 
   paginationEl.style.display = "flex";
   pageInfoEl.textContent = `Page ${currentPage} of ${totalPages} (${totalRuns} runs)`;
-  prevBtn.disabled = currentOffset === 0;
-  nextBtn.disabled = currentOffset + LIMIT >= totalRuns;
+  prevBtn.disabled = currentPage === 1;
+  nextBtn.disabled = currentPage >= totalPages;
 }
 
 prevBtn.addEventListener("click", () => {
-  if (currentOffset > 0) {
-    currentOffset -= LIMIT;
+  if (currentPage > 1) {
+    currentPage--;
     loadRuns();
   }
 });
 
 nextBtn.addEventListener("click", () => {
-  if (currentOffset + LIMIT < totalRuns) {
-    currentOffset += LIMIT;
+  if (currentPage < totalPages) {
+    currentPage++;
     loadRuns();
   }
 });
 
-async function openModal(runId) {
+async function openModal(runId, runType) {
   currentRunId = runId;
   modalOverlay.classList.add("active");
   modalTitle.textContent = runId;
-  modalImage.src = `/api/runs/${runId}/image`;
   modalPrompt.textContent = "Loading...";
   modalParams.innerHTML = "";
+  sourceSection.style.display = "none";
+
+  // Set type badge
+  modalTypeBadge.textContent = runType || "image";
+  modalTypeBadge.className = `modal-type-badge ${runType || "image"}`;
+
+  // Show appropriate media
+  if (runType === "video") {
+    modalMediaContainer.innerHTML = `
+      <video class="modal-video" id="modalVideo" controls autoplay loop>
+        <source src="/api/runs/${runId}/video" type="video/mp4">
+        Your browser does not support video.
+      </video>
+    `;
+    videoBtn.style.display = "none";
+  } else {
+    modalMediaContainer.innerHTML = `<img class="modal-image" id="modalImage" src="/api/runs/${runId}/image" alt="" />`;
+    videoBtn.style.display = "inline-block";
+  }
 
   try {
     const resp = await fetch(`/api/runs/${runId}`);
@@ -495,6 +688,18 @@ async function openModal(runId) {
 
     currentRunData = await resp.json();
     modalPrompt.textContent = currentRunData.prompt || "(no prompt)";
+
+    // Show source link if applicable
+    if (currentRunData.source_run_id) {
+      sourceSection.style.display = "block";
+      sourceLink.textContent = `View source: ${currentRunData.source_run_id}`;
+      sourceLink.href = "#";
+      sourceLink.onclick = (e) => {
+        e.preventDefault();
+        closeModal();
+        openModal(currentRunData.source_run_id, "image");
+      };
+    }
 
     const params = [
       { label: "Preset", value: currentRunData.preset },
@@ -504,6 +709,10 @@ async function openModal(runId) {
       { label: "Guidance", value: currentRunData.guidance_scale },
       { label: "Time", value: currentRunData.seconds ? `${currentRunData.seconds.toFixed(1)}s` : "—" },
     ];
+
+    if (currentRunData.backend) {
+      params.push({ label: "Backend", value: currentRunData.backend.split("/").pop() });
+    }
 
     modalParams.innerHTML = params.map(p => `
       <div class="param-item">
@@ -519,6 +728,9 @@ async function openModal(runId) {
 
 function closeModal() {
   modalOverlay.classList.remove("active");
+  // Stop any playing video
+  const video = document.getElementById("modalVideo");
+  if (video) video.pause();
   currentRunId = null;
   currentRunData = null;
 }
@@ -547,6 +759,13 @@ templateBtn.addEventListener("click", () => {
   if (currentRunData.guidance_scale !== undefined) params.set("guidance", currentRunData.guidance_scale);
 
   window.location.href = "/?" + params.toString();
+});
+
+videoBtn.addEventListener("click", () => {
+  if (!currentRunId) return;
+
+  // Navigate to video generation UI with source run ID
+  window.location.href = `/video?source=${currentRunId}`;
 });
 
 deleteBtn.addEventListener("click", async () => {
@@ -578,4 +797,3 @@ loadRuns();
 </body>
 </html>"""
     return HTMLResponse(content=html)
-

@@ -31,5 +31,5 @@ class GenerateVideoResponse(BaseModel):
     num_frames: int
     seed: int
     preset: str
-    backend: str
+    source_run_id: str | None = None
 

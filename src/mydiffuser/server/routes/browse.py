@@ -1,20 +1,25 @@
 """Browse API routes for viewing past generations."""
 
-import json
 import shutil
 from pathlib import Path
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 
-from mydiffuser.config import OUTPUT_DIR, RUNS_IMAGE_DIR
+from mydiffuser.config import RUNS_DIR, THUMBS_CACHE_DIR
+from mydiffuser.utils.paths import (
+    find_run_dir,
+    get_run_type,
+    list_all_runs,
+    read_json,
+)
 
 router = APIRouter(prefix="/api/runs", tags=["browse"])
 
-# Thumbnail cache directory
-THUMBS_DIR = OUTPUT_DIR / ".thumbs"
+# Thumbnail settings
 THUMB_SIZE = 256
 
 
@@ -22,14 +27,17 @@ class RunSummary(BaseModel):
     """Summary of a generation run for listing."""
 
     id: str
+    type: str
     prompt_preview: str
     timestamp: str
+    source_run_id: str | None = None
 
 
 class RunDetail(BaseModel):
     """Full details of a generation run."""
 
     id: str
+    type: str
     prompt: str
     preset: str
     seed: int
@@ -38,6 +46,8 @@ class RunDetail(BaseModel):
     num_inference_steps: int
     guidance_scale: float
     seconds: float | None = None
+    source_run_id: str | None = None
+    backend: str | None = None
 
 
 class RunListResponse(BaseModel):
@@ -45,8 +55,9 @@ class RunListResponse(BaseModel):
 
     runs: list[RunSummary]
     total: int
+    page: int
+    pages: int
     limit: int
-    offset: int
 
 
 def _parse_timestamp(run_id: str) -> str:
@@ -65,9 +76,9 @@ def _parse_timestamp(run_id: str) -> str:
     return run_id
 
 
-def _get_prompt_preview(run_dir: Path, max_len: int = 100) -> str:
+def _get_prompt_preview(run_dir_path: Path, max_len: int = 100) -> str:
     """Read first line of prompt, truncated."""
-    prompt_file = run_dir / "prompt.txt"
+    prompt_file = run_dir_path / "prompt.txt"
     if prompt_file.exists():
         try:
             text = prompt_file.read_text(encoding="utf-8").strip()
@@ -80,60 +91,105 @@ def _get_prompt_preview(run_dir: Path, max_len: int = 100) -> str:
     return ""
 
 
+def _get_run_meta(run_dir_path: Path) -> dict[str, Any]:
+    """Read meta.json from a run directory."""
+    meta_file = run_dir_path / "meta.json"
+    if meta_file.exists():
+        try:
+            return read_json(meta_file)
+        except Exception:
+            pass
+    return {}
+
+
+def _get_source_run_id(run_dir_path: Path) -> str | None:
+    """Get source_run_id from meta.json if present."""
+    meta = _get_run_meta(run_dir_path)
+    return meta.get("source_run_id")
+
+
 def _validate_run_path(run_id: str) -> Path:
     """Validate run ID and return path, raising HTTPException if invalid."""
     # Prevent path traversal
     if "/" in run_id or "\\" in run_id or ".." in run_id:
         raise HTTPException(status_code=400, detail="Invalid run ID")
 
-    run_dir = RUNS_IMAGE_DIR / run_id
-    if not run_dir.exists() or not run_dir.is_dir():
+    run_dir_path = find_run_dir(run_id)
+    if run_dir_path is None:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # Extra safety: ensure resolved path is under RUNS_IMAGE_DIR
-    resolved = run_dir.resolve()
-    if RUNS_IMAGE_DIR.resolve() not in resolved.parents:
+    # Extra safety: ensure resolved path is under RUNS_DIR
+    resolved = run_dir_path.resolve()
+    runs_resolved = RUNS_DIR.resolve()
+    if runs_resolved not in resolved.parents and resolved != runs_resolved:
         raise HTTPException(status_code=400, detail="Invalid run ID")
 
-    return run_dir
+    return run_dir_path
 
 
 @router.get("", response_model=RunListResponse)
-def list_runs(limit: int = 24, offset: int = 0) -> RunListResponse:
-    """List generation runs, newest first."""
-    if not RUNS_IMAGE_DIR.exists():
-        return RunListResponse(runs=[], total=0, limit=limit, offset=offset)
+def list_runs(
+    type: Literal["all", "image", "video", "img2img"] = Query(
+        default="all", description="Filter by run type"
+    ),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=24, ge=1, le=100, description="Items per page"),
+) -> RunListResponse:
+    """List generation runs, newest first.
 
-    # Get all run directories, sorted by name descending (newest first)
-    all_dirs = sorted(
-        [d for d in RUNS_IMAGE_DIR.iterdir() if d.is_dir()],
-        key=lambda d: d.name,
-        reverse=True,
-    )
+    Supports filtering by type and pagination.
+    """
+    # Get all runs from both new and legacy locations
+    all_runs = list_all_runs()
 
-    total = len(all_dirs)
-    paginated = all_dirs[offset : offset + limit]
+    # Filter by type if requested
+    if type != "all":
+        filtered_runs = []
+        for run_dir_path in all_runs:
+            run_type = get_run_type(run_dir_path)
+            if run_type == type:
+                filtered_runs.append(run_dir_path)
+        all_runs = filtered_runs
+
+    total = len(all_runs)
+    pages = (total + limit - 1) // limit if total > 0 else 1
+
+    # Paginate
+    offset = (page - 1) * limit
+    paginated = all_runs[offset : offset + limit]
 
     runs = []
-    for run_dir in paginated:
+    for run_dir_path in paginated:
+        run_id = run_dir_path.name
+        run_type = get_run_type(run_dir_path)
+
         runs.append(
             RunSummary(
-                id=run_dir.name,
-                prompt_preview=_get_prompt_preview(run_dir),
-                timestamp=_parse_timestamp(run_dir.name),
+                id=run_id,
+                type=run_type,
+                prompt_preview=_get_prompt_preview(run_dir_path),
+                timestamp=_parse_timestamp(run_id),
+                source_run_id=_get_source_run_id(run_dir_path),
             )
         )
 
-    return RunListResponse(runs=runs, total=total, limit=limit, offset=offset)
+    return RunListResponse(
+        runs=runs,
+        total=total,
+        page=page,
+        pages=pages,
+        limit=limit,
+    )
 
 
 @router.get("/{run_id}", response_model=RunDetail)
 def get_run(run_id: str) -> RunDetail:
     """Get full details of a run."""
-    run_dir = _validate_run_path(run_id)
+    run_dir_path = _validate_run_path(run_id)
+    run_type = get_run_type(run_dir_path)
 
     # Read prompt
-    prompt_file = run_dir / "prompt.txt"
+    prompt_file = run_dir_path / "prompt.txt"
     prompt = ""
     if prompt_file.exists():
         try:
@@ -141,27 +197,42 @@ def get_run(run_id: str) -> RunDetail:
         except Exception:
             pass
 
-    # Read resolved params
-    resolved_file = run_dir / "resolved.json"
+    # Try new meta.json format first
+    meta = _get_run_meta(run_dir_path)
+
+    if "params" in meta:
+        # New unified format
+        params = meta.get("params", {})
+        return RunDetail(
+            id=run_id,
+            type=run_type,
+            prompt=prompt or meta.get("prompt", ""),
+            preset=params.get("preset", "custom"),
+            seed=params.get("seed", 0),
+            height=params.get("height", 1024),
+            width=params.get("width", 1024),
+            num_inference_steps=params.get("num_inference_steps", 8),
+            guidance_scale=params.get("guidance_scale", 0.0),
+            seconds=meta.get("seconds_elapsed"),
+            source_run_id=meta.get("source_run_id"),
+            backend=meta.get("backend"),
+        )
+
+    # Fall back to legacy format (resolved.json + meta.json)
+    resolved_file = run_dir_path / "resolved.json"
     resolved: dict = {}
     if resolved_file.exists():
         try:
-            resolved = json.loads(resolved_file.read_text(encoding="utf-8"))
+            resolved = read_json(resolved_file)
         except Exception:
             pass
 
-    # Read meta for timing
-    meta_file = run_dir / "meta.json"
-    seconds = None
-    if meta_file.exists():
-        try:
-            meta = json.loads(meta_file.read_text(encoding="utf-8"))
-            seconds = meta.get("seconds")
-        except Exception:
-            pass
+    # Legacy meta for timing
+    seconds = meta.get("seconds")
 
     return RunDetail(
         id=run_id,
+        type=run_type,
         prompt=prompt,
         preset=resolved.get("preset", "custom"),
         seed=resolved.get("seed", 0),
@@ -170,38 +241,53 @@ def get_run(run_id: str) -> RunDetail:
         num_inference_steps=resolved.get("num_inference_steps", 8),
         guidance_scale=resolved.get("guidance_scale", 0.0),
         seconds=seconds,
+        source_run_id=None,
+        backend=None,
     )
 
 
 @router.get("/{run_id}/thumb")
 def get_thumbnail(run_id: str) -> Response:
-    """Get thumbnail for a run, generating and caching if needed."""
-    run_dir = _validate_run_path(run_id)
+    """Get thumbnail for a run.
 
-    # Check cache
-    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-    thumb_path = THUMBS_DIR / f"{run_id}.png"
+    For new runs, returns thumb.jpg from run directory.
+    For legacy runs, generates and caches thumbnail.
+    """
+    run_dir_path = _validate_run_path(run_id)
 
-    if not thumb_path.exists():
-        # Generate thumbnail
-        output_png = run_dir / "output.png"
+    # Check for new-style embedded thumbnail first
+    thumb_in_dir = run_dir_path / "thumb.jpg"
+    if thumb_in_dir.exists():
+        return Response(
+            content=thumb_in_dir.read_bytes(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    # Fall back to cached thumbnail for legacy runs
+    THUMBS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached_thumb = THUMBS_CACHE_DIR / f"{run_id}.jpg"
+
+    if not cached_thumb.exists():
+        # Find output image
+        output_png = run_dir_path / "output.png"
         if not output_png.exists():
             raise HTTPException(status_code=404, detail="Output image not found")
 
         try:
             with Image.open(output_png) as img:
-                # Maintain aspect ratio
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
                 img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.Resampling.LANCZOS)
-                img.save(thumb_path, "PNG")
+                img.save(cached_thumb, "JPEG", quality=85, optimize=True)
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to generate thumbnail: {e}"
             ) from None
 
-    # Return cached thumbnail
     return Response(
-        content=thumb_path.read_bytes(),
-        media_type="image/png",
+        content=cached_thumb.read_bytes(),
+        media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -209,9 +295,9 @@ def get_thumbnail(run_id: str) -> Response:
 @router.get("/{run_id}/image")
 def get_full_image(run_id: str) -> Response:
     """Get the full-size output image."""
-    run_dir = _validate_run_path(run_id)
+    run_dir_path = _validate_run_path(run_id)
 
-    output_png = run_dir / "output.png"
+    output_png = run_dir_path / "output.png"
     if not output_png.exists():
         raise HTTPException(status_code=404, detail="Output image not found")
 
@@ -221,26 +307,48 @@ def get_full_image(run_id: str) -> Response:
     )
 
 
+@router.get("/{run_id}/video")
+def get_video(run_id: str) -> Response:
+    """Get the output video (for video runs)."""
+    run_dir_path = _validate_run_path(run_id)
+
+    output_mp4 = run_dir_path / "output.mp4"
+    if not output_mp4.exists():
+        raise HTTPException(status_code=404, detail="Output video not found")
+
+    return Response(
+        content=output_mp4.read_bytes(),
+        media_type="video/mp4",
+    )
+
+
 @router.delete("/{run_id}")
 def delete_run(run_id: str) -> dict:
-    """Delete a run and its thumbnail."""
-    run_dir = _validate_run_path(run_id)
+    """Delete a run and its cached thumbnail."""
+    run_dir_path = _validate_run_path(run_id)
 
-    # Delete thumbnail if exists
-    thumb_path = THUMBS_DIR / f"{run_id}.png"
-    if thumb_path.exists():
+    # Delete cached thumbnail if exists
+    cached_thumb = THUMBS_CACHE_DIR / f"{run_id}.jpg"
+    if cached_thumb.exists():
         try:
-            thumb_path.unlink()
+            cached_thumb.unlink()
+        except Exception:
+            pass
+
+    # Also try old .png format
+    cached_thumb_png = THUMBS_CACHE_DIR / f"{run_id}.png"
+    if cached_thumb_png.exists():
+        try:
+            cached_thumb_png.unlink()
         except Exception:
             pass
 
     # Delete run directory
     try:
-        shutil.rmtree(run_dir)
+        shutil.rmtree(run_dir_path)
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to delete run: {e}"
         ) from None
 
     return {"deleted": run_id}
-

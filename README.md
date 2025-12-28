@@ -2,13 +2,48 @@
 
 Image and video generation server optimized for AMD GPUs (ROCm).
 
-Currently supports **Z-Image-Turbo** for text-to-image generation, with video generation planned.
+Supports:
+- **Z-Image-Turbo** for text-to-image generation
+- **Wan2.1** for image-to-video generation (optional)
 
 ## Requirements
 
 - Python 3.12+
 - AMD GPU with ROCm support (tested on AMD Max+ 395 / gfx1201)
 - PyTorch with ROCm (nightly recommended for latest GPU support)
+
+### GPU Memory (GTT) Configuration
+
+On AMD APUs with unified memory (like the Max+ 395), you may need to increase the GPU's GTT (Graphics Translation Table) allocation to run large models.
+
+**Check current allocation:**
+```bash
+sudo dmesg | grep -i "GTT memory"
+# Example: [drm] amdgpu: 64042M of GTT memory ready.
+```
+
+**To increase GTT (e.g., to 96GB):**
+
+For **systemd-boot** (Arch Linux):
+```bash
+# Edit your boot entry
+sudo nano /boot/loader/entries/arch.conf
+# Add to options line: amdgpu.gttsize=98304
+```
+
+For **GRUB**:
+```bash
+sudo nano /etc/default/grub
+# Add to GRUB_CMDLINE_LINUX_DEFAULT: amdgpu.gttsize=98304
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+```
+
+Reboot and verify with `dmesg | grep -i "GTT memory"`.
+
+**Memory requirements:**
+- Image model (Z-Image-Turbo): ~30GB
+- Video model (Wan2.2-I2V-A14B): ~30GB
+- Both models simultaneously: ~60GB (or use lazy loading)
 
 ## Quick Start
 
@@ -24,28 +59,57 @@ source .venv/bin/activate
 
 # This MUST be done before doing a uv sync or pip install. 
 
-uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+# from a clean venv
+uv pip uninstall  torch torchvision torchaudio || true
+uv pip install --pre torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+
+
 
 # Install the project in editable mode
 uv pip install -e .
 
-# Run the server
+# Run the server (image generation only)
 python scripts/run_server.py
+
+# Run with video generation enabled (requires more VRAM)
+MYDIFFUSER_VIDEO=1 python scripts/run_server.py
+
+# Run with lazy loading (swaps models on demand, uses less memory)
+MYDIFFUSER_LAZY=1 MYDIFFUSER_VIDEO=1 python scripts/run_server.py
 ```
 
 The server starts at `http://localhost:8000`. Open it in a browser for the web UI.
+
+## Web UI
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Image Generator | `/` | Text-to-image generation |
+| Video Generator | `/video` | Image-to-video generation |
+| Browse History | `/browse` | View, filter, and remix past generations |
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Web UI for interactive generation |
+| `/` | GET | Web UI for image generation |
+| `/video` | GET | Web UI for video generation |
+| `/browse` | GET | Browse past generations |
 | `/health` | GET | Server status and configuration |
 | `/generate` | POST | Generate image, return JSON metadata |
 | `/generate_image` | POST | Generate image, return PNG bytes |
+| `/generate_video` | POST | Generate video from image |
+| `/api/runs` | GET | List runs (supports `?type=image|video|all`) |
+| `/api/runs/{id}` | GET | Get run details |
+| `/api/runs/{id}/thumb` | GET | Get run thumbnail |
+| `/api/runs/{id}/image` | GET | Get output image |
+| `/api/runs/{id}/video` | GET | Get output video |
+| `/api/runs/{id}` | DELETE | Delete a run |
 
-### Example API Call
+### Example API Calls
 
+**Generate an image:**
 ```bash
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
@@ -56,11 +120,23 @@ curl -X POST http://localhost:8000/generate \
   }'
 ```
 
+**Generate a video from an image run:**
+```bash
+curl -X POST http://localhost:8000/generate_video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_run_id": "20251226-123456-abcd1234",
+    "prompt": "subtle head turn, gentle breathing",
+    "preset": "draft",
+    "seed": 42
+  }'
+```
+
 ## Configuration
 
-### Generation Presets
+### Image Presets
 
-Edit `src/mydiffuser/utils/presets.py` to customize presets:
+Edit `src/mydiffuser/utils/presets.py` to customize image presets:
 
 ```python
 PRESETS = {
@@ -79,48 +155,116 @@ PRESETS = {
 }
 ```
 
-**Parameters:**
-- `height` / `width`: Output dimensions (must be multiples of 8, range 256-2048)
-- `num_inference_steps`: More steps = better quality but slower (4-12 typical for turbo)
-- `guidance_scale`: Classifier-free guidance (use 0.0 for Z-Image-Turbo)
+### Video Presets
+
+See [Wan-AI on Hugging Face](https://huggingface.co/Wan-AI) for available models.
+
+```python
+VIDEO_PRESETS = {
+    "draft": {
+        "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "fps": 12,
+        "duration_seconds": 3,
+        "num_inference_steps": 15,
+        "guidance_scale": 3.0,
+    },
+    "final": {
+        "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "fps": 16,
+        "duration_seconds": 5,
+        "num_inference_steps": 30,
+        "guidance_scale": 3.5,
+    },
+    "hq": {
+        "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "fps": 24,
+        "duration_seconds": 7,
+        "num_inference_steps": 50,
+        "guidance_scale": 4.0,
+    },
+}
+```
 
 ### Device & Performance Settings
 
 Edit `src/mydiffuser/config.py`:
 
 ```python
-# Device settings
 DEVICE = "cuda"           # ROCm uses cuda API
 DTYPE = torch.bfloat16    # Options: float32 (slow/safe), bfloat16 (balanced), float16 (fast/risky)
-
-# Warmup settings (adjust if you want faster startup at cost of first-request latency)
-WARMUP_HEIGHT = 832
-WARMUP_WIDTH = 832
-WARMUP_STEPS = 4
 ```
 
 **dtype recommendations:**
 - `torch.float32`: Safest, slowest. Use if you get NaN/crashes.
-- `torch.bfloat16`: Good balance of speed and stability (recommended for gfx1201)
+- `torch.bfloat16`: Good balance of speed and stability (recommended)
 - `torch.float16`: Fastest but may cause memory faults on some workloads
+
+### Loading Strategy
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MYDIFFUSER_VIDEO` | `0` | Set to `1` to enable video generation |
+| `MYDIFFUSER_LAZY` | `0` | Set to `1` to enable lazy loading (model swapping) |
+
+**Eager loading (default):**
+- Both models load at startup
+- Fast switching between image and video generation
+- Requires ~60GB GPU memory for both
+
+**Lazy loading (`MYDIFFUSER_LAZY=1`):**
+- Models load on first request
+- When switching from image→video (or vice versa), the old model is unloaded first
+- Only requires ~30GB GPU memory at any time
+- First request of each type has model loading latency (~30-60s)
 
 ## Output Structure
 
-Generated images are saved to `outputs/run/image/`:
+All runs are saved to `outputs/run/` with a unified structure:
 
 ```
 outputs/
 └── run/
-    └── image/
-        └── 20251225-221530-a1b2c3d4/    # Timestamp + short UUID
-            ├── output.png               # Generated image
-            ├── prompt.txt               # Input prompt
-            ├── request.json             # Full API request
-            ├── resolved.json            # Resolved parameters (preset + overrides)
-            └── meta.json                # Generation metadata (time, device, etc.)
+    └── 20251225-221530-a1b2c3d4/    # Timestamp + short UUID
+        ├── meta.json               # Type, parameters, timing
+        ├── thumb.jpg               # Thumbnail (256px)
+        ├── prompt.txt              # Input prompt
+        ├── request.json            # Full API request
+        │
+        │ # For image runs:
+        ├── output.png              # Generated image
+        │
+        │ # For video runs:
+        ├── input.png               # Source image
+        └── output.mp4              # Generated video
 ```
 
 Run IDs are time-ordered (format: `YYYYMMDD-HHMMSS-<uuid8>`) so they sort chronologically.
+
+### meta.json Structure
+
+```json
+{
+  "type": "image",
+  "run_id": "20251226-123456-abcd1234",
+  "timestamp": "2025-12-26T12:34:56Z",
+  "prompt": "A cyberpunk cityscape",
+  "source_run_id": null,
+  "backend": "Tongyi-MAI/Z-Image-Turbo",
+  "params": {
+    "preset": "draft",
+    "seed": 42,
+    "height": 832,
+    "width": 832
+  },
+  "outputs": {
+    "image": "output.png",
+    "thumb": "thumb.jpg"
+  },
+  "seconds_elapsed": 2.3
+}
+```
 
 ## Project Structure
 
@@ -131,25 +275,29 @@ mydiffuser/
 │   ├── generators/
 │   │   ├── base.py            # Abstract generator class
 │   │   ├── image.py           # Z-Image-Turbo text-to-image
-│   │   ├── img2img.py         # (placeholder)
-│   │   └── video/             # (placeholder for SVD, etc.)
+│   │   └── video/
+│   │       ├── base.py        # Abstract video generator
+│   │       └── wan.py         # Wan2.1 image-to-video
 │   ├── models/
 │   │   ├── requests.py        # Pydantic request models
 │   │   └── responses.py       # Pydantic response models
 │   ├── server/
 │   │   ├── app.py             # FastAPI app factory
-│   │   ├── state.py           # Global state (loaded model)
-│   │   ├── ui.py              # Web UI
+│   │   ├── state.py           # Global state (loaded models)
+│   │   ├── ui.py              # Image generation UI
+│   │   ├── video_ui.py        # Video generation UI
+│   │   ├── browse_ui.py       # Browse history UI
 │   │   └── routes/
 │   │       ├── health.py      # /health endpoint
 │   │       ├── image.py       # /generate, /generate_image
-│   │       └── video.py       # (placeholder)
+│   │       ├── video.py       # /generate_video
+│   │       └── browse.py      # /api/runs endpoints
 │   └── utils/
 │       ├── paths.py           # Run directory management
-│       └── presets.py         # Generation presets ← EDIT THIS
+│       └── presets.py         # Generation presets
 ├── scripts/
 │   └── run_server.py          # Entry point
-├── outputs/                   # Generated images (gitignored)
+├── outputs/                   # Generated content (gitignored)
 └── archive/                   # Old experimental files
 ```
 
@@ -183,6 +331,28 @@ ruff check src/ --fix
 - Make sure you've installed the package: `uv pip install -e .`
 - Or run via script: `python scripts/run_server.py`
 
-## License
+### Video generation not available
+- Set environment variable: `MYDIFFUSER_VIDEO=1`
+- Ensure you have enough VRAM (8GB+ for 1.3B model, 24GB+ for 14B)
+- The Wan2.1 model downloads on first use
 
-MIT
+
+
+## On Lambda
+
+```
+# clean venv
+uv pip uninstall -y torch torchvision torchaudio || true
+
+# pick one CUDA channel (example: cu124)
+uv pip install torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cu124
+
+# install your project editable
+uv pip install -e .
+
+# optional: dev tools
+uv sync --group dev
+```
+
+
