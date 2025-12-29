@@ -14,6 +14,7 @@ from mydiffuser.config import (
     RUNS_IMAGE_DIR,
     RUNS_VIDEO_DIR,
     THUMB_SIZE,
+    WORKER_RUNS_DIR,
 )
 
 # Run types supported by the system
@@ -61,6 +62,25 @@ def run_dir(run_id: str, run_type: RunType | None = None) -> Path:
     else:
         d = RUNS_DIR / run_id
 
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def worker_run_dir(run_id: str) -> Path:
+    """Get or create a worker run directory for the given ID.
+
+    Worker structure: outputs/worker/{run_id}/
+
+    This keeps worker temporary storage separate from client runs.
+    Client will fetch results from workers and save to outputs/run/.
+
+    Args:
+        run_id: Unique run identifier
+
+    Returns:
+        Path to the worker run directory (created if needed)
+    """
+    d = WORKER_RUNS_DIR / run_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 

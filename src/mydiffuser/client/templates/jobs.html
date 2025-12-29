@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Job Queue - MyDiffuser Client{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .container {
+        max-width: 1400px;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #161b22;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    th {
+        background: #21262d;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        color: #8b949e;
+        border-bottom: 1px solid #30363d;
+    }
+    td {
+        padding: 12px;
+        border-bottom: 1px solid #30363d;
+    }
+    tr:last-child td {
+        border-bottom: none;
+    }
+    tr:hover {
+        background: #1c2128;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    .status-queued {
+        background: #1a3d5c;
+        color: #58a6ff;
+    }
+    .status-submitted, .status-processing {
+        background: #3d2a1a;
+        color: #f2cc60;
+    }
+    .status-complete {
+        background: #1a3d2a;
+        color: #3fb950;
+    }
+    .status-failed, .status-error {
+        background: #4c1d1d;
+        color: #f85149;
+    }
+    .progress-bar {
+        width: 100%;
+        height: 20px;
+        background: #21262d;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+    }
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #238636 0%, #2ea043 100%);
+        transition: width 0.3s ease;
+    }
+    .progress-text {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 11px;
+        font-weight: 600;
+        color: #e6edf3;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+    .prompt {
+        font-family: 'Monaco', 'Menlo', monospace;
+        font-size: 12px;
+        color: #8b949e;
+        max-width: 300px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .worker-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #21262d;
+        color: #8b949e;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: #8b949e;
+    }
+    .empty-state svg {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+    .refresh-info {
+        font-size: 12px;
+        color: #8b949e;
+        margin-bottom: 1em;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Job Queue</h1>
+
+    <div class="nav">
+        <a href="/">← Home</a>
+        <a href="/browse">Browse Results</a>
+        <a href="/generate/image">Generate Image</a>
+        <a href="/generate/video">Generate Video</a>
+    </div>
+
+    <div class="info">
+        Monitor all submitted jobs across all workers. Page auto-refreshes every 5 seconds.
+    </div>
+
+    <div class="refresh-info" id="refreshInfo">Loading jobs...</div>
+
+    <div id="jobsContainer">
+        <div class="empty-state">
+            <svg viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/>
+            </svg>
+            <p>No jobs yet. Start by generating an image or video!</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/jobs.js"></script>
+{% endblock %}

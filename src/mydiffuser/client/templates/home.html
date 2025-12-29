@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}MyDiffuser Client{% endblock %}
+
+{% block extra_styles %}
+<style>
+    body { max-width: 600px; margin: 100px auto; }
+    .home-link {
+        display: block;
+        margin: 10px 0;
+        padding: 10px;
+        background: #f0f0f0;
+        text-decoration: none;
+        color: #333;
+        border-radius: 4px;
+    }
+    .home-link:hover {
+        background: #e0e0e0;
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>MyDiffuser Client UI</h1>
+<p>Welcome to the client interface. Select an action:</p>
+<a href="/generate/image" class="home-link">🎨 Generate Image</a>
+<a href="/generate/video" class="home-link">🎬 Generate Video (I2V)</a>
+<a href="/browse" class="home-link">📁 Browse Results</a>
+<a href="/jobs" class="home-link">⚙️ Job Queue</a>
+<a href="/health" class="home-link">🏥 Health Check</a>
+<p><small>Version: {{ version }}</small></p>
+<p><small>This is the lightweight client UI (no GPU required).</small></p>
+{% endblock %}

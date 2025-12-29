@@ -24,7 +24,7 @@ from mydiffuser.config import (
     configure_torch_backends,
 )
 from mydiffuser.generators.video.base import BaseVideoGenerator
-from mydiffuser.server.state import check_shutdown, is_shutdown_requested
+from mydiffuser.shutdown import check_shutdown, is_shutdown_requested
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,7 @@ class WanVideoGenerator(BaseVideoGenerator):
         seed: int,
         output_path: Path,
         run_id: str = "",
+        callback_on_step_end = None,
     ) -> tuple[Path, float, int]:
         self.ensure_loaded()
         check_shutdown()
@@ -201,6 +202,19 @@ class WanVideoGenerator(BaseVideoGenerator):
 
         try:
             logger.info("%sStarting pipeline inference...", log_prefix)
+
+            # Chain callbacks if custom callback provided
+            if callback_on_step_end is not None:
+                def _combined_callback(pipe, step_index, timestep, callback_kwargs):
+                    # Run shutdown check first
+                    shutdown_result = _shutdown_callback(pipe, step_index, timestep, callback_kwargs)
+                    # Then run custom callback
+                    custom_result = callback_on_step_end(pipe, step_index, timestep, callback_kwargs)
+                    return custom_result
+                final_callback = _combined_callback
+            else:
+                final_callback = _shutdown_callback
+
             result = self._pipe(  # type: ignore[operator]
                 image=input_image,
                 prompt=prompt,
@@ -208,7 +222,7 @@ class WanVideoGenerator(BaseVideoGenerator):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
                 generator=generator,
-                callback_on_step_end=_shutdown_callback,
+                callback_on_step_end=final_callback,
                 output_type="latent",
                 return_dict=True,
             )

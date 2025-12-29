@@ -19,7 +19,7 @@ from mydiffuser.config import (
     WARMUP_WIDTH,
 )
 from mydiffuser.generators.base import BaseGenerator
-from mydiffuser.server.state import check_shutdown, is_shutdown_requested
+from mydiffuser.shutdown import check_shutdown, is_shutdown_requested
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,7 @@ class ImageGenerator(BaseGenerator):
         guidance_scale: float,
         seed: int,
         run_id: str = "",
+        callback_on_step_end = None,
     ) -> tuple[Image.Image, float]:
         """Generate an image from a text prompt.
 
@@ -142,6 +143,7 @@ class ImageGenerator(BaseGenerator):
             guidance_scale: Classifier-free guidance scale (0.0 for turbo)
             seed: Random seed for reproducibility
             run_id: Optional run ID for logging
+            callback_on_step_end: Optional callback function for progress updates
 
         Returns:
             Tuple of (PIL Image, generation time in seconds)
@@ -154,6 +156,19 @@ class ImageGenerator(BaseGenerator):
 
         gen = torch.Generator(DEVICE).manual_seed(seed)
         assert self._pipe is not None
+
+        # Chain callbacks if custom callback provided
+        if callback_on_step_end is not None:
+            def _combined_callback(pipe, step_index, timestep, callback_kwargs):
+                # Run shutdown check first
+                shutdown_result = _shutdown_callback(pipe, step_index, timestep, callback_kwargs)
+                # Then run custom callback
+                custom_result = callback_on_step_end(pipe, step_index, timestep, callback_kwargs)
+                return custom_result
+            final_callback = _combined_callback
+        else:
+            final_callback = _shutdown_callback
+
         try:
             out = self._pipe(  # type: ignore[operator]
                 prompt=prompt,
@@ -163,7 +178,7 @@ class ImageGenerator(BaseGenerator):
                 guidance_scale=guidance_scale,
                 generator=gen,
                 output_type=OUTPUT_TYPE,
-                callback_on_step_end=_shutdown_callback,
+                callback_on_step_end=final_callback,
             )
         except InterruptedError:
             logger.info("Generation interrupted by shutdown, runid=%s", run_id)

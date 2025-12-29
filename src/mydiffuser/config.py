@@ -7,10 +7,19 @@ Environment variables can override any setting.
 import logging
 import os
 from pathlib import Path
-
-import torch
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Try to import torch, but don't fail if it's not available
+# This allows the client (UI-only) to import config without PyTorch
+try:
+    import torch
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+    # Create a dummy torch module for type hints
+    torch = None  # type: ignore
 
 # ============================================================================
 # Platform Detection
@@ -18,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 def _detect_platform() -> str:
     """Detect GPU platform: 'rocm', 'cuda', or 'cpu'."""
+    if not _TORCH_AVAILABLE or torch is None:
+        return "cpu"
+
     if not torch.cuda.is_available():
         return "cpu"
 
@@ -48,18 +60,29 @@ IS_CPU = PLATFORM == "cpu"
 # ============================================================================
 
 # Device is always "cuda" for both ROCm and CUDA (ROCm uses CUDA API)
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if (_TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()) else "cpu"
 
 # --- Main inference dtype ---
 # Both ROCm and CUDA: bf16 is a good default (stable, fast)
 # Can override with MYDIFFUSER_DTYPE=fp16|fp32|bf16
-_DTYPE_MAP = {
-    "fp32": torch.float32, "float32": torch.float32,
-    "bf16": torch.bfloat16, "bfloat16": torch.bfloat16,
-    "fp16": torch.float16, "float16": torch.float16,
-}
+def _get_dtype_map() -> dict[str, Any]:
+    """Get dtype mapping. Returns dummy values if torch not available."""
+    if not _TORCH_AVAILABLE or torch is None:
+        # Return dummy values for client (won't be used for inference)
+        return {
+            "fp32": "float32", "float32": "float32",
+            "bf16": "bfloat16", "bfloat16": "bfloat16",
+            "fp16": "float16", "float16": "float16",
+        }
+    return {
+        "fp32": torch.float32, "float32": torch.float32,
+        "bf16": torch.bfloat16, "bfloat16": torch.bfloat16,
+        "fp16": torch.float16, "float16": torch.float16,
+    }
+
+_DTYPE_MAP = _get_dtype_map()
 DTYPE_NAME = os.environ.get("MYDIFFUSER_DTYPE", "bf16").lower()
-DTYPE = _DTYPE_MAP.get(DTYPE_NAME, torch.bfloat16)
+DTYPE = _DTYPE_MAP.get(DTYPE_NAME, _DTYPE_MAP["bf16"])
 
 # --- VAE decode settings ---
 # ROCm (gfx1151): VAE conv3d crashes on GPU, must use CPU + fp32
@@ -76,7 +99,7 @@ else:
 
 VAE_DEVICE = os.environ.get("MYDIFFUSER_VAE_DEVICE", _DEFAULT_VAE_DEVICE)
 VAE_DTYPE_NAME = os.environ.get("MYDIFFUSER_VAE_DTYPE", _DEFAULT_VAE_DTYPE).lower()
-VAE_DTYPE = _DTYPE_MAP.get(VAE_DTYPE_NAME, torch.float32)
+VAE_DTYPE = _DTYPE_MAP.get(VAE_DTYPE_NAME, _DTYPE_MAP["fp32"])
 
 
 # ============================================================================
@@ -94,6 +117,10 @@ def configure_torch_backends():
 
     Call this early in application startup.
     """
+    if not _TORCH_AVAILABLE or torch is None:
+        logger.warning("PyTorch not available, skipping backend configuration")
+        return
+
     if not torch.cuda.is_available():
         return
 
@@ -125,6 +152,7 @@ LAZY_LOADING = os.environ.get("MYDIFFUSER_LAZY", "1") == "1"
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 RUNS_DIR = OUTPUT_DIR / "run"
+WORKER_RUNS_DIR = OUTPUT_DIR / "worker"  # Worker temporary storage (separate from client)
 THUMBS_CACHE_DIR = OUTPUT_DIR / ".thumbs"
 
 # Legacy paths (for migration compatibility)
@@ -136,6 +164,7 @@ def ensure_output_dirs() -> None:
     """Create output directories if they don't exist."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    WORKER_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     THUMBS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
@@ -179,15 +208,16 @@ def get_config_summary() -> dict:
     summary = {
         "platform": PLATFORM,
         "device": DEVICE,
-        "dtype": str(DTYPE).replace("torch.", ""),
+        "dtype": str(DTYPE).replace("torch.", "") if _TORCH_AVAILABLE else DTYPE,
         "vae_device": VAE_DEVICE,
-        "vae_dtype": str(VAE_DTYPE).replace("torch.", ""),
+        "vae_dtype": str(VAE_DTYPE).replace("torch.", "") if _TORCH_AVAILABLE else VAE_DTYPE,
         "lazy_loading": LAZY_LOADING,
         "flash_sdp": USE_FLASH_SDP,
         "video_model": VIDEO_MODEL_SIZE,
+        "torch_available": _TORCH_AVAILABLE,
     }
 
-    if torch.cuda.is_available():
+    if _TORCH_AVAILABLE and torch is not None and torch.cuda.is_available():
         try:
             summary["gpu_name"] = torch.cuda.get_device_name(0)
             mem_info = torch.cuda.mem_get_info()

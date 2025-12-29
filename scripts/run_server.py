@@ -43,7 +43,7 @@ sys.path.insert(0, str(src_path))
 
 # PID file location
 PID_FILE = Path(__file__).parent.parent / "outputs" / "mydiffuser.pid"
-PORT = 8000
+PORT = 7999
 
 
 def is_process_running(pid: int) -> bool:

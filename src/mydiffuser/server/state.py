@@ -3,12 +3,12 @@
 import asyncio
 import gc
 import logging
-import threading
 from typing import TYPE_CHECKING, Literal
 
 import torch
 
 from mydiffuser.config import LAZY_LOADING
+from mydiffuser import shutdown
 
 if TYPE_CHECKING:
     from mydiffuser.generators.image import ImageGenerator
@@ -25,10 +25,6 @@ _active_model: Literal["image", "video", None] = None
 
 # Lock to serialize inference (GPU can only do one at a time)
 infer_lock = asyncio.Lock()
-
-# Shutdown flag - checked during long operations
-# Use threading.Event since it's thread-safe and works across sync/async
-_shutdown_event = threading.Event()
 
 
 def _unload_all_models() -> None:
@@ -215,31 +211,11 @@ def unload_all_models() -> dict:
     return result
 
 
-def request_shutdown() -> None:
-    """Signal that shutdown has been requested."""
-    _shutdown_event.set()
-
-
-def is_shutdown_requested() -> bool:
-    """Check if shutdown has been requested."""
-    return _shutdown_event.is_set()
-
-
-def check_shutdown() -> None:
-    """Raise an exception if shutdown was requested.
-
-    Call this at safe points during long operations to allow
-    graceful interruption.
-    """
-    if _shutdown_event.is_set():
-        raise ShutdownRequested("Server shutdown requested")
-
-
-def reset_shutdown() -> None:
-    """Reset the shutdown flag (for testing)."""
-    _shutdown_event.clear()
-
-
-class ShutdownRequested(Exception):
-    """Raised when a shutdown is requested during a long operation."""
-    pass
+# Re-export shutdown functions for backwards compatibility
+from mydiffuser.shutdown import (
+    request_shutdown,
+    is_shutdown_requested,
+    check_shutdown,
+    reset_shutdown,
+    ShutdownRequested,
+)
