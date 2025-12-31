@@ -13,6 +13,9 @@ source .venv/bin/activate
 uv pip install --pre torch torchvision torchaudio \
   --index-url https://download.pytorch.org/whl/nightly/rocm7.1
 
+# Install transformers from GitHub (required for Qwen2-VL support)
+uv pip install git+https://github.com/huggingface/transformers
+
 # Then install all other dependencies (with --no-deps for torch-dependent packages to avoid conflicts)
 uv sync --group dev --no-install-project
 

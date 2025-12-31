@@ -18,15 +18,17 @@ from mydiffuser import shutdown
 if TYPE_CHECKING:
     from mydiffuser.generators.image import ImageGenerator
     from mydiffuser.generators.video.wan import WanVideoGenerator
+    from mydiffuser.inference.assistant import PromptAssistant
 
 logger = logging.getLogger(__name__)
 
 # Global generator instances (loaded at startup or on-demand)
 image_generator: "ImageGenerator | None" = None
 video_generator: "WanVideoGenerator | None" = None
+prompt_assistant: "PromptAssistant | None" = None
 
 # Track which model type is currently loaded (for lazy loading)
-_active_model: Literal["image", "video", None] = None
+_active_model: Literal["image", "video", "assistant", None] = None
 
 # Lock to serialize inference (GPU can only do one at a time)
 infer_lock = asyncio.Lock()
@@ -38,7 +40,7 @@ def _unload_all_models() -> None:
     This performs multiple rounds of garbage collection and cache clearing
     to ensure all GPU memory is released before loading a new model.
     """
-    global image_generator, video_generator, _active_model
+    global image_generator, video_generator, prompt_assistant, _active_model
 
     if image_generator is not None:
         logger.info("Unloading image generator...")
@@ -49,6 +51,11 @@ def _unload_all_models() -> None:
         logger.info("Unloading video generator...")
         video_generator.unload()  # Properly unload (moves to CPU, deletes, gc)
         video_generator = None
+
+    if prompt_assistant is not None:
+        logger.info("Unloading prompt assistant...")
+        prompt_assistant.unload()
+        prompt_assistant = None
 
     _active_model = None
 
@@ -191,9 +198,50 @@ def get_infer_lock() -> asyncio.Lock:
     return infer_lock
 
 
-def get_active_model() -> Literal["image", "video", None]:
+def get_active_model() -> Literal["image", "video", "assistant", None]:
     """Get the currently active model type."""
     return _active_model
+
+
+def ensure_prompt_assistant() -> "PromptAssistant":
+    """Get the prompt assistant, loading it if necessary.
+
+    The assistant can coexist with the image generator (~34GB total).
+    It will be unloaded when video generation is requested.
+
+    Returns:
+        Loaded PromptAssistant instance
+    """
+    global prompt_assistant, _active_model
+
+    if prompt_assistant is not None:
+        return prompt_assistant
+
+    # In lazy mode, only unload video generator (assistant can coexist with image gen)
+    if LAZY_LOADING and _active_model == "video":
+        logger.info("Lazy loading: unloading video model for assistant")
+        _unload_all_models()
+
+    # Load the assistant
+    from mydiffuser.inference.assistant import PromptAssistant
+
+    logger.info("Loading prompt assistant...")
+    prompt_assistant = PromptAssistant()
+    prompt_assistant.load()
+    _active_model = "assistant"
+    logger.info("Prompt assistant ready")
+
+    return prompt_assistant
+
+
+def get_prompt_assistant() -> "PromptAssistant":
+    """Get the loaded prompt assistant instance.
+
+    Use ensure_prompt_assistant() for lazy loading support.
+    """
+    if prompt_assistant is None:
+        raise RuntimeError("Prompt assistant not loaded")
+    return prompt_assistant
 
 
 def unload_all_models() -> dict:
