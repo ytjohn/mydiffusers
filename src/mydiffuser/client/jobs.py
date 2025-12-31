@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -13,6 +13,7 @@ from PIL import Image
 from mydiffuser.client.config import get_worker_endpoint, DEFAULT_WORKER_JOB_POLL_INTERVAL, list_workers
 from mydiffuser.client.worker_client import WorkerClient
 from mydiffuser.utils.paths import run_dir
+from mydiffuser.client import database
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +52,31 @@ class ClientJob:
     fetched_at: datetime | None = None
 
 
-# In-memory job storage (TODO: persist to SQLite)
-_jobs: dict[str, ClientJob] = {}
+# Helper functions for database conversion
+def _job_to_dict(job: ClientJob) -> dict:
+    """Convert ClientJob to dict for database storage."""
+    return asdict(job)
+
+
+def _dict_to_job(data: dict) -> ClientJob:
+    """Convert database dict to ClientJob dataclass."""
+    # Filter out database-only fields that aren't in ClientJob
+    job_fields = {
+        'job_id', 'type', 'worker_name', 'worker_endpoint', 'status',
+        'prompt', 'preset', 'seed', 'worker_run_id', 'worker_progress',
+        'worker_step', 'worker_total_steps', 'worker_message',
+        'local_run_id', 'error', 'created_at', 'submitted_at',
+        'completed_at', 'fetched_at'
+    }
+
+    filtered_data = {k: v for k, v in data.items() if k in job_fields}
+
+    # Convert ISO strings back to datetime objects
+    for field in ['created_at', 'submitted_at', 'completed_at', 'fetched_at']:
+        if filtered_data.get(field):
+            filtered_data[field] = datetime.fromisoformat(filtered_data[field])
+
+    return ClientJob(**filtered_data)
 
 
 def create_job(
@@ -90,7 +114,8 @@ def create_job(
         submitted_at=datetime.now(UTC),
     )
 
-    _jobs[job_id] = job
+    # Persist to database
+    database.create_client_job(_job_to_dict(job))
     logger.info(f"Created client job {job_id} -> {worker_name} ({worker_endpoint})")
     return job
 
@@ -104,7 +129,8 @@ def get_job(job_id: str) -> ClientJob | None:
     Returns:
         ClientJob if found, None otherwise
     """
-    return _jobs.get(job_id)
+    job_data = database.get_client_job(job_id)
+    return _dict_to_job(job_data) if job_data else None
 
 
 def list_jobs() -> list[ClientJob]:
@@ -113,7 +139,8 @@ def list_jobs() -> list[ClientJob]:
     Returns:
         List of ClientJob instances, newest first
     """
-    return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
+    job_data_list = database.list_client_jobs()
+    return [_dict_to_job(job_data) for job_data in job_data_list]
 
 
 def update_job_status(job_id: str, status_data: dict) -> None:
@@ -123,24 +150,30 @@ def update_job_status(job_id: str, status_data: dict) -> None:
         job_id: Job ID
         status_data: Status dict from worker
     """
-    job = _jobs.get(job_id)
+    job = get_job(job_id)
     if job is None:
         logger.warning(f"Attempted to update unknown job {job_id}")
         return
 
-    # Update from worker status
-    job.status = status_data.get("status", "running")
-    job.worker_progress = status_data.get("progress", 0.0)
-    job.worker_step = status_data.get("current_step", 0)
-    job.worker_total_steps = status_data.get("total_steps", 0)
-    job.worker_message = status_data.get("message")
-    job.worker_run_id = status_data.get("run_id")
-    job.error = status_data.get("error")
+    # Prepare updates dict
+    updates = {
+        'status': status_data.get("status", "running"),
+        'worker_progress': status_data.get("progress", 0.0),
+        'worker_step': status_data.get("current_step", 0),
+        'worker_total_steps': status_data.get("total_steps", 0),
+        'worker_message': status_data.get("message"),
+        'worker_run_id': status_data.get("run_id"),
+        'error': status_data.get("error"),
+    }
 
-    if job.status == "complete" and job.completed_at is None:
-        job.completed_at = datetime.now(UTC)
-    elif job.status == "failed":
-        job.completed_at = datetime.now(UTC)
+    # Set completed_at timestamp if status changed to complete/failed
+    if updates['status'] == "complete" and job.completed_at is None:
+        updates['completed_at'] = datetime.now(UTC)
+    elif updates['status'] == "failed":
+        updates['completed_at'] = datetime.now(UTC)
+
+    # Persist to database
+    database.update_client_job_status(job_id, updates)
 
 
 async def poll_and_fetch_job(job_id: str) -> Path | None:
@@ -169,6 +202,12 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
                 status_data = client.get_status(job_id)
                 update_job_status(job_id, status_data)
 
+                # Refresh job from database to get updated status
+                job = get_job(job_id)
+                if job is None:
+                    logger.error(f"Job {job_id} disappeared from database")
+                    return None
+
                 if job.status == "complete":
                     logger.info(f"Job {job_id} complete, fetching results...")
                     break
@@ -181,8 +220,10 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
 
             except Exception as e:
                 logger.exception(f"Error polling job {job_id}: {e}")
-                job.status = "failed"
-                job.error = str(e)
+                database.update_client_job_status(job_id, {
+                    'status': 'failed',
+                    'error': str(e)
+                })
                 return None
 
         # Fetch results
@@ -194,11 +235,13 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
             local_dir = run_dir(job.worker_run_id)
             client.fetch_results(job_id, local_dir)
 
-            job.local_run_id = job.worker_run_id
-            job.fetched_at = datetime.now(UTC)
+            # Update job with fetch completion
+            database.update_client_job_status(job_id, {
+                'local_run_id': job.worker_run_id,
+                'fetched_at': datetime.now(UTC)
+            })
 
             # Index run in SQLite database
-            from mydiffuser.client import database
             from mydiffuser.utils.paths import read_json
             meta_file = local_dir / "meta.json"
             if meta_file.exists():
@@ -214,8 +257,10 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
 
         except Exception as e:
             logger.exception(f"Error fetching results for job {job_id}: {e}")
-            job.status = "failed"
-            job.error = f"Fetch failed: {e}"
+            database.update_client_job_status(job_id, {
+                'status': 'failed',
+                'error': f"Fetch failed: {e}"
+            })
             return None
 
 
@@ -374,11 +419,26 @@ async def sync_jobs_from_workers() -> dict[str, int]:
     Queries each worker for active jobs and adds them to client tracking if missing.
     This recovers jobs that were running when the client was restarted.
 
+    Also attempts to fetch results for completed jobs that were never fetched.
+
     Returns:
-        Dict mapping worker name to number of jobs recovered
+        Dict mapping worker name to number of jobs recovered/retried
     """
     logger.info("Syncing jobs from workers...")
     recovered = {}
+
+    # First, try to fetch any completed jobs that were never fetched
+    unfetched_jobs = database.list_client_jobs(limit=100)
+    unfetched = [j for j in unfetched_jobs if j['status'] == 'complete' and j['fetched_at'] is None]
+
+    if unfetched:
+        logger.info(f"Found {len(unfetched)} completed jobs that were never fetched, attempting recovery...")
+        for job_data in unfetched:
+            job_id = job_data['job_id']
+            logger.info(f"Attempting to fetch results for job {job_id}")
+            asyncio.create_task(poll_and_fetch_job(job_id))
+
+    # Continue with normal worker sync for in-progress jobs
 
     for worker in list_workers():
         worker_name = worker["id"]
@@ -399,7 +459,7 @@ async def sync_jobs_from_workers() -> dict[str, int]:
                     continue
 
                 # Skip if we already have this job
-                if job_id in _jobs:
+                if get_job(job_id) is not None:
                     logger.debug(f"Job {job_id} already tracked, updating status")
                     update_job_status(job_id, job_data)
                     continue
@@ -429,7 +489,8 @@ async def sync_jobs_from_workers() -> dict[str, int]:
                     submitted_at=datetime.now(UTC),
                 )
 
-                _jobs[job_id] = job
+                # Persist to database
+                database.create_client_job(_job_to_dict(job))
 
                 # Start polling for this recovered job
                 asyncio.create_task(poll_and_fetch_job(job_id))

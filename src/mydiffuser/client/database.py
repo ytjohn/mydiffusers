@@ -533,3 +533,120 @@ def backfill_runs(force_refresh: bool = False, run_ids: list[str] = None) -> dic
 
     logger.info(f"Backfill complete: {stats['updated']} runs updated, {stats['errors']} errors")
     return stats
+
+
+# ============================================================================
+# Client Jobs CRUD Functions
+# ============================================================================
+
+def create_client_job(job_data: dict) -> None:
+    """Insert a new client job into the database.
+
+    Args:
+        job_data: Dict with job fields matching ClientJob dataclass
+    """
+    with get_db() as conn:
+        conn.execute('''
+            INSERT INTO client_jobs (
+                job_id, type, status,
+                worker_name, worker_endpoint, worker_run_id,
+                worker_progress, worker_step, worker_total_steps, worker_message,
+                prompt, preset, seed, request_params,
+                local_run_id, error,
+                created_at, submitted_at, completed_at, fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            job_data['job_id'],
+            job_data['type'],
+            job_data['status'],
+            job_data['worker_name'],
+            job_data['worker_endpoint'],
+            job_data.get('worker_run_id'),
+            job_data.get('worker_progress', 0.0),
+            job_data.get('worker_step', 0),
+            job_data.get('worker_total_steps', 0),
+            job_data.get('worker_message'),
+            job_data.get('prompt', ''),
+            job_data.get('preset', 'draft'),
+            job_data.get('seed', 42),
+            job_data.get('request_params'),
+            job_data.get('local_run_id'),
+            job_data.get('error'),
+            job_data['created_at'].isoformat() if job_data.get('created_at') else datetime.now(UTC).isoformat(),
+            job_data['submitted_at'].isoformat() if job_data.get('submitted_at') else None,
+            job_data['completed_at'].isoformat() if job_data.get('completed_at') else None,
+            job_data['fetched_at'].isoformat() if job_data.get('fetched_at') else None,
+        ))
+    logger.debug(f"Created client job {job_data['job_id']} in database")
+
+
+def get_client_job(job_id: str) -> dict | None:
+    """Retrieve a client job by ID.
+
+    Args:
+        job_id: Job ID to fetch
+
+    Returns:
+        Job data dict or None if not found
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM client_jobs WHERE job_id = ?',
+            (job_id,)
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
+
+
+def list_client_jobs(limit: int = 50) -> list[dict]:
+    """List all client jobs, newest first.
+
+    Args:
+        limit: Maximum number of jobs to return
+
+    Returns:
+        List of job data dicts
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM client_jobs ORDER BY created_at DESC LIMIT ?',
+            (limit,)
+        ).fetchall()
+
+        return [dict(row) for row in rows]
+
+
+def update_client_job_status(job_id: str, updates: dict) -> None:
+    """Update job status and progress fields.
+
+    Args:
+        job_id: Job ID to update
+        updates: Dict with fields to update (status, worker_progress, worker_step, etc.)
+    """
+    with get_db() as conn:
+        # Build dynamic UPDATE statement
+        update_fields = []
+        values = []
+
+        for field in ['status', 'worker_run_id', 'worker_progress', 'worker_step',
+                      'worker_total_steps', 'worker_message', 'local_run_id', 'error',
+                      'completed_at', 'fetched_at']:
+            if field in updates:
+                update_fields.append(f'{field} = ?')
+                value = updates[field]
+                # Convert datetime to ISO string
+                if field in ('completed_at', 'fetched_at') and value is not None:
+                    value = value.isoformat() if hasattr(value, 'isoformat') else value
+                values.append(value)
+
+        if not update_fields:
+            return
+
+        values.append(job_id)
+        sql = f"UPDATE client_jobs SET {', '.join(update_fields)} WHERE job_id = ?"
+        conn.execute(sql, values)
+
+    logger.debug(f"Updated client job {job_id}: {list(updates.keys())}")
