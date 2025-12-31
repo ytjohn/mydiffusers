@@ -38,6 +38,31 @@ To increase (e.g., 96GB for both models):
 
 ## Architecture
 
+MyDiffuser uses a **client/worker architecture** to separate UI concerns from GPU-intensive inference:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  CLIENT (port 8000) - GPU-free UI server                │
+│  - Web UI for image/video generation, browsing          │
+│  - Job submission and progress tracking                 │
+│  - Prompt assistant UI                                  │
+│  - SQLite database (job persistence, conversations)     │
+│  - NO PyTorch/GPU dependencies                          │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          │ HTTP
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│  WORKER(S) (port 8001+) - GPU inference servers         │
+│  - Load and manage diffusion models                     │
+│  - Image generation (Z-Image Turbo)                     │
+│  - Video generation (Wan2.2 I2V)                        │
+│  - Prompt assistant (Qwen2-VL-2B)                       │
+│  - Lazy loading and model swapping                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Project Structure:**
 ```
 src/mydiffuser/
 ├── config.py           # Central config: device, dtype, paths, models
@@ -47,22 +72,33 @@ src/mydiffuser/
 ├── models/
 │   ├── requests.py     # Pydantic request models
 │   └── responses.py    # Pydantic response models
-├── generators/
-│   ├── base.py         # Abstract BaseGenerator
+├── inference/          # Worker-side model management
+│   ├── state.py        # Global state (generators, locks)
+│   ├── assistant.py    # Qwen2-VL prompt assistant
 │   ├── image.py        # Z-Image Turbo generator
 │   └── video/
 │       ├── base.py     # Abstract BaseVideoGenerator
 │       └── wan.py      # Wan2.2 I2V generator
-└── server/
-    ├── app.py          # FastAPI app factory, startup logic
-    ├── state.py        # Global state (generators, locks)
-    ├── ui.py           # Image generation web UI
-    ├── video_ui.py     # Video generation web UI
-    ├── browse_ui.py    # Run history browser
+├── client/             # Client-side (GPU-free)
+│   ├── app.py          # FastAPI app factory
+│   ├── database.py     # SQLite CRUD operations
+│   ├── worker_client.py # HTTP client for workers
+│   ├── routes.py       # Job submission endpoints
+│   ├── assist_routes.py # Prompt assistant API
+│   ├── admin_routes.py # Admin endpoints (backfill)
+│   ├── ui.py           # Image generation web UI
+│   ├── assist_ui.py    # Prompt assistant UI
+│   ├── browse_ui.py    # Run history browser
+│   ├── health_ui.py    # Worker health dashboard
+│   ├── templates/      # Jinja2 HTML templates
+│   └── static/         # CSS, JavaScript
+└── worker/             # Worker-side (GPU inference)
+    ├── app.py          # FastAPI app factory
     └── routes/
         ├── health.py   # Health check endpoint
-        ├── image.py    # /generate, /generate_image
-        └── video.py    # /generate_video
+        ├── image.py    # /generate_image
+        ├── video.py    # /generate_video
+        └── assist.py   # /assist/analyze
 ```
 
 ## Key Models Used
@@ -200,29 +236,76 @@ ruff check src/ --fix
 | `MYDIFFUSER_VAE_DEVICE` | `cuda` | VAE device (`cpu` for gfx1151 workaround) |
 | `MYDIFFUSER_FLASH_SDP` | `0` | Set to `1` to test flash attention (experimental) |
 
+## Prompt Assistant (Implemented ✓)
+
+**Status**: Fully functional as of 2025-12-31 (commit `bf933a2`)
+
+An AI-powered prompt improvement tool that helps users craft better image generation prompts through iterative analysis and suggestions.
+
+### Features
+
+- **Model**: Qwen2-VL-2B-Instruct (2B params, ~4GB VRAM)
+- **UI**: Standalone `/assist` page with chat-style interface
+- **Multi-turn conversations**: Persistent sessions with full history
+- **Image analysis**: Upload images and get AI-powered feedback
+- **Prompt suggestions**: 2-3 specific improvements with rationales
+- **Quick actions**: Copy to clipboard or use directly in image generator
+
+### Architecture
+
+**Client/Worker Split**:
+- Client: GPU-free UI server, handles routing and session persistence
+- Worker: GPU-based inference server, loads Qwen2-VL on-demand
+- Communication: Client forwards requests to worker via HTTP
+
+**Memory Management**:
+- Loads on first `/assist` request (~15s delay)
+- Coexists with image generator (~34GB total: 30GB + 4GB)
+- Unloaded when video generation is requested
+- Worker health dashboard shows which models are in memory
+
+**Database**:
+- SQLite at `outputs/runs.db`
+- Tables: `assist_sessions`, `assist_turns`
+- Full conversation history with timestamps
+- Session status tracking (active, resolved, abandoned)
+
+### Usage Flow
+
+1. Navigate to `/assist` from any page
+2. Create new session with a goal (e.g., "improve character interactions")
+3. Upload image and enter current prompt
+4. Optionally describe specific issue
+5. Get AI analysis and 2-3 prompt suggestions
+6. Copy suggestion or use directly in `/generate/image`
+7. Continue conversation by uploading next iteration
+8. Mark session as resolved when satisfied
+
+### API Endpoints
+
+- `POST /api/assist/analyze` - Analyze image and suggest improvements
+- `GET /api/assist/sessions` - List recent sessions
+- `GET /api/assist/sessions/{id}` - Get full conversation history
+- `POST /api/assist/sessions/{id}/resolve` - Mark session as resolved
+
+### SQLite Database
+
+**Status**: Fully implemented (schema v4)
+
+- **Location**: `outputs/runs.db`
+- **Tables**:
+  - `runs` - All generation metadata with FTS5 full-text search
+  - `client_jobs` - Job tracking across client restarts
+  - `assist_sessions` - Conversation sessions
+  - `assist_turns` - Individual analysis turns with suggestions
+- **Features**:
+  - Full-text search (FTS5) for prompt search
+  - Automatic triggers to keep FTS in sync
+  - Job persistence across restarts
+  - Conversation history storage
+- **Backfill**: Admin UI to populate missing params from meta.json files
+
 ## Future Plans
-
-### Prompt Assistant (Planned)
-See `plan-for-prompt-assist.md` for full details.
-
-- **Goal**: AI-powered help for crafting better image prompts
-- **Model**: Qwen2-VL-2B (2B params, supports image AND video understanding)
-- **Approach**: On-demand loading to avoid GPU memory conflicts
-- **Alternative**: CPU-only mode (slower but zero GPU impact)
-- **Use case**: "My characters aren't interacting" → get improved prompt suggestions
-- **Multi-turn**: Chat-style debugging sessions (30+ iterations is common)
-
-### SQLite Database (Planned)
-Part of the prompt assistant plan - see `plan-for-prompt-assist.md`.
-
-- **Location**: `outputs/mydiffuser.db`
-- **Library**: `aiosqlite` for async FastAPI compatibility
-- **Purpose**: 
-  - Conversation session persistence
-  - Prompt search (full-text search with FTS5)
-  - Pattern knowledge base ("what worked before")
-  - Run metadata (faster than scanning JSON files)
-- **Hybrid approach**: DB for metadata/search, filesystem for binary assets
 
 ### Other Future Work
 - img2img generation

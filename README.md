@@ -4,7 +4,8 @@ Image and video generation server optimized for AMD GPUs (ROCm).
 
 Supports:
 - **Z-Image-Turbo** for text-to-image generation
-- **Wan2.1** for image-to-video generation (optional)
+- **Wan2.2** for image-to-video generation (optional)
+- **Qwen2-VL-2B** for AI-powered prompt improvement (optional)
 
 ## Requirements
 
@@ -88,6 +89,8 @@ The server starts at `http://localhost:8000`. Open it in a browser for the web U
 | Image Generator | `/` | Text-to-image generation |
 | Video Generator | `/video` | Image-to-video generation |
 | Browse History | `/browse` | View, filter, and remix past generations |
+| Prompt Assistant | `/assist` | AI-powered prompt improvement with Qwen2-VL |
+| Health Dashboard | `/health-dashboard` | Monitor worker status and GPU usage |
 
 ## API Endpoints
 
@@ -106,6 +109,10 @@ The server starts at `http://localhost:8000`. Open it in a browser for the web U
 | `/api/runs/{id}/image` | GET | Get output image |
 | `/api/runs/{id}/video` | GET | Get output video |
 | `/api/runs/{id}` | DELETE | Delete a run |
+| `/api/assist/analyze` | POST | Analyze image and get prompt suggestions |
+| `/api/assist/sessions` | GET | List prompt assistant sessions |
+| `/api/assist/sessions/{id}` | GET | Get session conversation history |
+| `/api/assist/sessions/{id}/resolve` | POST | Mark session as resolved |
 
 ### Example API Calls
 
@@ -131,6 +138,44 @@ curl -X POST http://localhost:8000/generate_video \
     "seed": 42
   }'
 ```
+
+## Prompt Assistant
+
+The Prompt Assistant uses Qwen2-VL-2B vision-language model to help you improve your image generation prompts through iterative analysis.
+
+### Features
+
+- **Multi-turn conversations**: Debug prompts over multiple iterations
+- **Image analysis**: Upload generated images to get AI-powered feedback
+- **Specific suggestions**: Get 2-3 concrete prompt improvements with rationales
+- **Session persistence**: Full conversation history saved in SQLite
+- **Quick actions**: Copy suggestions to clipboard or use directly in generator
+
+### Usage
+
+1. Navigate to `/assist` from any page
+2. Start a new session with your goal (e.g., "improve character interactions")
+3. Upload an image and enter the prompt that generated it
+4. Optionally describe what's wrong (e.g., "the arms look floating")
+5. Get AI analysis and 2-3 improved prompt suggestions
+6. Click "Copy" to copy a suggestion, or "Use" to try it in the generator
+7. Upload your next iteration to continue the conversation
+8. Mark the session as resolved when you're satisfied
+
+### Architecture
+
+The assistant uses a **client/worker split**:
+- **Client** (port 8000): GPU-free UI server with web interface and SQLite database
+- **Worker** (port 8001+): GPU inference server that loads Qwen2-VL on-demand
+
+The worker loads Qwen2-VL-2B lazily (~4GB VRAM) and can coexist with the image generator (~34GB total). It will be unloaded when video generation is requested to free up memory.
+
+### Memory Requirements
+
+- Image model: ~30GB
+- Video model: ~30GB
+- Assistant model: ~4GB
+- Image + Assistant together: ~34GB (fits in 96GB allocation)
 
 ## Configuration
 
