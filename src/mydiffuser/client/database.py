@@ -650,3 +650,182 @@ def update_client_job_status(job_id: str, updates: dict) -> None:
         conn.execute(sql, values)
 
     logger.debug(f"Updated client job {job_id}: {list(updates.keys())}")
+
+
+# ============================================================================
+# Assist Session Management
+# ============================================================================
+
+def create_assist_session(goal: str) -> str:
+    """Create a new assist session.
+
+    Args:
+        goal: User's goal for this session (e.g., "improve character interaction")
+
+    Returns:
+        session_id: UUID for the new session
+    """
+    import uuid
+    from datetime import datetime
+
+    session_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+
+    with get_db() as conn:
+        conn.execute('''
+            INSERT INTO assist_sessions (session_id, goal, status, created_at, updated_at)
+            VALUES (?, ?, 'active', ?, ?)
+        ''', (session_id, goal, now, now))
+
+    logger.info(f"Created assist session {session_id}: {goal}")
+    return session_id
+
+
+def add_assist_turn(
+    session_id: str,
+    turn_number: int,
+    run_id: str | None,
+    current_prompt: str,
+    user_message: str | None,
+    assistant_response: str,
+    suggested_prompts: list[dict],
+    model_used: str = "Qwen2-VL-2B-Instruct"
+) -> int:
+    """Add a turn to an assist session.
+
+    Args:
+        session_id: Session UUID
+        turn_number: Turn number (1-indexed)
+        run_id: Optional run_id if analyzing existing image
+        current_prompt: Prompt that generated the image
+        user_message: Optional user feedback/issue description
+        assistant_response: Full model response
+        suggested_prompts: List of prompt suggestions with rationales
+        model_used: Model identifier
+
+    Returns:
+        turn_id: Auto-increment ID for the turn
+    """
+    import json
+    from datetime import datetime
+
+    with get_db() as conn:
+        cursor = conn.execute('''
+            INSERT INTO assist_turns
+            (session_id, turn_number, run_id, prompt_used,
+             user_message, assistant_response, suggested_prompts, model_used, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            session_id, turn_number, run_id, current_prompt,
+            user_message, assistant_response, json.dumps(suggested_prompts), model_used,
+            datetime.now().isoformat()
+        ))
+
+        turn_id = cursor.lastrowid
+
+        # Update session metadata
+        conn.execute('''
+            UPDATE assist_sessions
+            SET turn_count = ?, updated_at = ?
+            WHERE session_id = ?
+        ''', (turn_number, datetime.now().isoformat(), session_id))
+
+    logger.info(f"Added turn {turn_number} to session {session_id}")
+    return turn_id
+
+
+def get_assist_session(session_id: str) -> dict | None:
+    """Get session with all turns.
+
+    Args:
+        session_id: Session UUID
+
+    Returns:
+        Dict with session info and list of turns, or None if not found
+    """
+    import json
+
+    with get_db() as conn:
+        # Get session
+        session_row = conn.execute(
+            'SELECT * FROM assist_sessions WHERE session_id = ?',
+            (session_id,)
+        ).fetchone()
+
+        if not session_row:
+            return None
+
+        session = dict(session_row)
+
+        # Get turns
+        turn_rows = conn.execute('''
+            SELECT * FROM assist_turns
+            WHERE session_id = ?
+            ORDER BY turn_number ASC
+        ''', (session_id,)).fetchall()
+
+        turns = []
+        for row in turn_rows:
+            turn = dict(row)
+            # Parse JSON suggested_prompts
+            if turn['suggested_prompts']:
+                turn['suggested_prompts'] = json.loads(turn['suggested_prompts'])
+            turns.append(turn)
+
+        session['turns'] = turns
+        return session
+
+
+def list_assist_sessions(limit: int = 20, status: str | None = None) -> list[dict]:
+    """List recent assist sessions.
+
+    Args:
+        limit: Maximum sessions to return
+        status: Optional filter by status ('active', 'resolved', 'abandoned')
+
+    Returns:
+        List of session dicts (without turns)
+    """
+    with get_db() as conn:
+        if status:
+            rows = conn.execute('''
+                SELECT * FROM assist_sessions
+                WHERE status = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+            ''', (status, limit)).fetchall()
+        else:
+            rows = conn.execute('''
+                SELECT * FROM assist_sessions
+                ORDER BY updated_at DESC
+                LIMIT ?
+            ''', (limit,)).fetchall()
+
+        return [dict(row) for row in rows]
+
+
+def resolve_assist_session(
+    session_id: str,
+    final_prompt: str,
+    final_run_id: str | None = None
+) -> None:
+    """Mark session as resolved with final prompt.
+
+    Args:
+        session_id: Session UUID
+        final_prompt: The final improved prompt
+        final_run_id: Optional run_id of final generation
+    """
+    from datetime import datetime
+
+    with get_db() as conn:
+        conn.execute('''
+            UPDATE assist_sessions
+            SET status = 'resolved',
+                final_prompt = ?,
+                final_run_id = ?,
+                updated_at = ?
+            WHERE session_id = ?
+        ''', (final_prompt, final_run_id, datetime.now().isoformat(), session_id))
+
+    logger.info(f"Resolved assist session {session_id}")
