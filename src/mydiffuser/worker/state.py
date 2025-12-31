@@ -20,7 +20,7 @@ job_progress: dict[str, "JobProgress"] = {}
 class JobProgress:
     """Progress information for a running job."""
 
-    status: Literal["queued", "pending", "running", "complete", "failed"]
+    status: Literal["queued", "pending", "running", "complete", "failed", "cancelled"]
     progress: float  # 0.0 to 1.0
     current_step: int
     total_steps: int
@@ -30,6 +30,7 @@ class JobProgress:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     seconds_elapsed: float | None = None
+    cancelled: bool = False  # Flag for cancellation request
 
     # Timing information for ETA calculation
     last_step_time: datetime | None = None  # When the last step completed
@@ -161,6 +162,56 @@ def mark_failed(job_id: str, error: str) -> None:
 def get_progress(job_id: str) -> JobProgress | None:
     """Get current progress for a job. Returns None if job not found."""
     return job_progress.get(job_id)
+
+
+def request_cancellation(job_id: str) -> bool:
+    """Request cancellation of a running job.
+
+    Returns True if cancellation was requested, False if job not found or already complete.
+    The actual cancellation happens between diffusion steps when the callback checks this flag.
+    """
+    if job_id not in job_progress:
+        logger.warning(f"[{job_id}] Cannot cancel - job not found")
+        return False
+
+    prog = job_progress[job_id]
+
+    # Can't cancel if already finished
+    if prog.status in ("complete", "failed", "cancelled"):
+        logger.warning(f"[{job_id}] Cannot cancel - job already {prog.status}")
+        return False
+
+    prog.cancelled = True
+    logger.info(f"[{job_id}] Cancellation requested")
+    return True
+
+
+def is_cancelled(job_id: str) -> bool:
+    """Check if a job has been cancelled.
+
+    This is called by the progress callback to determine if generation should stop.
+    """
+    if job_id not in job_progress:
+        return False
+    return job_progress[job_id].cancelled
+
+
+def mark_cancelled(job_id: str) -> None:
+    """Mark job as cancelled after generation has stopped."""
+    if job_id not in job_progress:
+        logger.warning(f"[{job_id}] Cannot mark cancelled - job not initialized")
+        return
+
+    prog = job_progress[job_id]
+    prog.status = "cancelled"
+    prog.message = "Cancelled by user"
+    prog.completed_at = datetime.now(UTC)
+
+    if prog.started_at:
+        elapsed = (datetime.now(UTC) - prog.started_at).total_seconds()
+        prog.seconds_elapsed = elapsed
+
+    logger.info(f"[{job_id}] Job cancelled at step {prog.current_step}/{prog.total_steps}")
 
 
 def cleanup_job(job_id: str) -> None:

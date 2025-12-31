@@ -294,6 +294,9 @@ def create_worker_app() -> FastAPI:
                 await asyncio.get_event_loop().run_in_executor(
                     None, jobs.execute_image_job, job_id, request, gen
                 )
+            except InterruptedError:
+                # Job was cancelled, already marked as cancelled in callback
+                logger.info(f"[{job_id}] Image job cancelled by user")
             except Exception as e:
                 logger.exception(f"[{job_id}] Job execution failed")
                 state.mark_failed(job_id, str(e))
@@ -322,9 +325,42 @@ def create_worker_app() -> FastAPI:
                     source_image,
                     gen,
                 )
+            except InterruptedError:
+                # Job was cancelled, already marked as cancelled in callback
+                logger.info(f"[{job_id}] Video job cancelled by user")
             except Exception as e:
                 logger.exception(f"[{job_id}] Job execution failed")
                 state.mark_failed(job_id, str(e))
+
+    @app.get("/jobs")
+    async def list_jobs():
+        """List recent jobs on this worker (last 10, including completed).
+
+        Returns active jobs plus recently completed ones for client sync.
+        Useful for client synchronization after restart.
+        """
+        all_jobs = []
+        for job_id, progress in state.job_progress.items():
+            job_data = progress.to_dict()
+            job_data["job_id"] = job_id
+            all_jobs.append(job_data)
+
+        # Sort by most recent first (using completed_at or started_at)
+        all_jobs.sort(
+            key=lambda j: (
+                j.get("completed_at") or j.get("started_at") or ""
+            ),
+            reverse=True
+        )
+
+        # Return last 10 jobs
+        recent_jobs = all_jobs[:10]
+
+        return {
+            "jobs": recent_jobs,
+            "count": len(recent_jobs),
+            "total": len(all_jobs)
+        }
 
     @app.get("/jobs/{job_id}/status")
     async def get_job_status(job_id: str):
@@ -373,6 +409,33 @@ def create_worker_app() -> FastAPI:
                 "Content-Disposition": f"attachment; filename={progress.run_id}.tar.gz"
             },
         )
+
+    @app.post("/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str):
+        """Request cancellation of a running job.
+
+        The job will be cancelled between diffusion steps (not immediately).
+        Returns 200 if cancellation was requested, 404 if job not found,
+        400 if job is already complete/failed/cancelled.
+        """
+        progress = state.get_progress(job_id)
+        if progress is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Request cancellation
+        success = state.request_cancellation(job_id)
+
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel job in state: {progress.status}"
+            )
+
+        return {
+            "status": "cancellation_requested",
+            "job_id": job_id,
+            "message": "Job will be cancelled between diffusion steps"
+        }
 
     @app.delete("/jobs/{job_id}")
     async def delete_job(job_id: str):

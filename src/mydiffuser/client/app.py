@@ -43,6 +43,16 @@ async def lifespan(app: FastAPI):
     database.init_database()
     logger.info("SQLite database initialized")
 
+    # Sync jobs from workers (recover in-flight jobs after restart)
+    from mydiffuser.client import jobs
+    try:
+        recovered = await jobs.sync_jobs_from_workers()
+        total = sum(recovered.values())
+        if total > 0:
+            logger.info(f"Recovered {total} in-flight jobs from workers")
+    except Exception as e:
+        logger.warning(f"Failed to sync jobs from workers: {e}")
+
     logger.info("Client UI startup complete (no models loaded)")
 
     yield
@@ -81,6 +91,10 @@ def create_app() -> FastAPI:
     # Include client UI forms (HTML forms for job submission)
     from mydiffuser.client import ui
     app.include_router(ui.router)
+
+    # Include health dashboard UI
+    from mydiffuser.client import health_ui
+    app.include_router(health_ui.router)
 
     # Mount static files
     if STATIC_DIR.exists():

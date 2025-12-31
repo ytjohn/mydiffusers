@@ -7,10 +7,11 @@
 
         // Image presets (populate form fields)
         const IMAGE_PRESETS = {
-            draft: { height: 480, width: 832, steps: 4, guidance: 0.0 },
-            fast: { height: 480, width: 832, steps: 6, guidance: 0.0 },
-            balanced: { height: 704, width: 1280, steps: 8, guidance: 0.0 },
-            quality: { height: 704, width: 1280, steps: 12, guidance: 0.0 },
+            draft: { height: 480, width: 832, steps: 4, guidance: 0.3 },
+            fast: { height: 480, width: 832, steps: 6, guidance: 0.3 },
+            balanced: { height: 704, width: 1280, steps: 8, guidance: 0.3 },
+            quality: { height: 704, width: 1280, steps: 12, guidance: 0.3 },
+            hq: { height: 1088, width: 1920, steps: 12, guidance: 0.3 },
         };
 
         function applyImagePreset(name) {

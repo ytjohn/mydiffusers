@@ -31,9 +31,22 @@ logger = logging.getLogger(__name__)
 
 
 def _create_step_callback(job_id: str, total_steps: int):
-    """Create a callback function for PyTorch pipeline step updates."""
+    """Create a callback function for PyTorch pipeline step updates.
+
+    The callback checks for cancellation between steps and signals the pipeline to stop.
+    """
 
     def callback(pipe, step_index: int, timestep, callback_kwargs):
+        # Check for cancellation first
+        if state.is_cancelled(job_id):
+            logger.info(f"[{job_id}] Cancellation detected at step {step_index + 1}/{total_steps}")
+            # Signal pipeline to stop by returning None or empty dict
+            # Different pipelines handle this differently, so we'll handle cleanup in execute_* functions
+            # For now, just mark as cancelled and let the exception bubble up
+            state.mark_cancelled(job_id)
+            # Raise an exception to stop generation immediately
+            raise InterruptedError(f"Job {job_id} cancelled by user")
+
         # Check if this is a post-processing phase (VAE decode)
         if isinstance(callback_kwargs, dict) and callback_kwargs.get("phase") == "vae_decode":
             state.update_step(
@@ -144,6 +157,12 @@ def execute_image_job(
         state.mark_complete(job_id, rid, dt, "Image generation complete")
 
         return rid, rd
+
+    except InterruptedError as e:
+        # Job was cancelled by user
+        logger.info(f"[{job_id}] Image generation cancelled")
+        # State is already marked as cancelled by the callback
+        raise
 
     except Exception as e:
         logger.exception(f"[{job_id}] Image generation failed")
@@ -256,6 +275,12 @@ def execute_video_job(
         state.mark_complete(job_id, rid, elapsed, "Video generation complete")
 
         return rid, rd
+
+    except InterruptedError as e:
+        # Job was cancelled by user
+        logger.info(f"[{job_id}] Video generation cancelled")
+        # State is already marked as cancelled by the callback
+        raise
 
     except Exception as e:
         logger.exception(f"[{job_id}] Video generation failed")

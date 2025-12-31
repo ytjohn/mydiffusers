@@ -8,15 +8,15 @@ command -v uv >/dev/null 2>&1 || curl -sSL https://astral.sh/uv/install.sh | sh
 [ -d .venv ] || uv venv
 source .venv/bin/activate
 
-# First: install everything from pyproject.toml
-uv sync --group dev
-
-# Then: ensure we have the right CUDA torch version
+# Install CUDA PyTorch FIRST (before any dependencies that might pull wrong version)
 : "${TORCH_CUDA_INDEX_URL:=https://download.pytorch.org/whl/cu124}"
-uv pip install -U torch torchvision torchaudio --index-url "$TORCH_CUDA_INDEX_URL"
+uv pip install torch torchvision torchaudio --index-url "$TORCH_CUDA_INDEX_URL"
 
-# Editable install so rsync updates work
-uv pip install -e .
+# Then install all other dependencies (with --no-deps for torch-dependent packages to avoid conflicts)
+uv sync --group dev --no-install-project
+
+# Finally: editable install of project (rsync-friendly)
+uv pip install -e . --no-deps
 
 # Verify
 echo ""

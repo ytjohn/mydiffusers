@@ -9,15 +9,15 @@ command -v uv >/dev/null 2>&1 || curl -sSL https://astral.sh/uv/install.sh | sh
 [ -d .venv ] || uv venv
 source .venv/bin/activate
 
-# First: install everything from pyproject.toml (will install CUDA torch)
-uv sync --group dev
-
-# Then: OVERWRITE with ROCm nightly torch (must be AFTER uv sync)
-uv pip install -U --pre torch torchvision torchaudio \
+# Install ROCm PyTorch FIRST (before any dependencies that might pull CUDA version)
+uv pip install --pre torch torchvision torchaudio \
   --index-url https://download.pytorch.org/whl/nightly/rocm7.1
 
-# Editable install so rsync updates work
-uv pip install -e .
+# Then install all other dependencies (with --no-deps for torch-dependent packages to avoid conflicts)
+uv sync --group dev --no-install-project
+
+# Finally: editable install of project (rsync-friendly)
+uv pip install -e . --no-deps
 
 # Verify we got ROCm
 echo ""

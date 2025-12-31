@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from PIL import Image
 import io
+import httpx
 
 from mydiffuser.client import jobs
 from mydiffuser.client.config import list_workers, WORKERS
@@ -19,6 +20,37 @@ router = APIRouter(prefix="/api", tags=["client"])
 async def get_workers():
     """List available workers and their capabilities."""
     return {"workers": list_workers()}
+
+
+@router.get("/workers/{worker_name}/health")
+async def get_worker_health(worker_name: str):
+    """Get health status from a specific worker (proxied to avoid CORS).
+
+    Args:
+        worker_name: Worker identifier (e.g., "local", "remote")
+
+    Returns:
+        Worker health data including GPU info, queue status, etc.
+    """
+    if worker_name not in WORKERS:
+        raise HTTPException(status_code=404, detail=f"Worker '{worker_name}' not found")
+
+    worker_config = WORKERS[worker_name]
+    endpoint = worker_config["endpoint"]
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{endpoint}/health")
+            response.raise_for_status()
+            return response.json()
+
+    except httpx.TimeoutException:
+        logger.warning(f"Worker {worker_name} health check timed out")
+        raise HTTPException(status_code=504, detail="Worker health check timed out")
+
+    except httpx.HTTPError as e:
+        logger.error(f"Worker {worker_name} health check failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Worker unreachable: {str(e)}")
 
 
 @router.get("/workers/{worker_name}/capabilities")
@@ -299,3 +331,53 @@ async def get_job_status(job_id: str):
         },
         "error": job.error,
     }
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Request cancellation of a running job on the worker.
+
+    Args:
+        job_id: Job ID to cancel
+
+    Returns:
+        Cancellation status from worker
+    """
+    job = jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Can't cancel if already finished
+    if job.status in ("complete", "failed", "cancelled"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel job in state: {job.status}"
+        )
+
+    # Forward cancellation request to worker
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{job.worker_endpoint}/jobs/{job.job_id}/cancel"
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        logger.info(f"[{job_id}] Cancellation requested on worker {job.worker_name}")
+
+        # Update local job status
+        job.status = "cancelled"
+        job.error = "Cancelled by user"
+
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "worker_response": result
+        }
+
+    except httpx.HTTPError as e:
+        logger.error(f"[{job_id}] Failed to cancel job on worker: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to communicate with worker: {str(e)}"
+        )

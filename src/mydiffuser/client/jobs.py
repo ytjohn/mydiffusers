@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from PIL import Image
 
-from mydiffuser.client.config import get_worker_endpoint, DEFAULT_WORKER_JOB_POLL_INTERVAL
+from mydiffuser.client.config import get_worker_endpoint, DEFAULT_WORKER_JOB_POLL_INTERVAL, list_workers
 from mydiffuser.client.worker_client import WorkerClient
 from mydiffuser.utils.paths import run_dir
 
@@ -365,3 +366,82 @@ async def submit_video_job(
         error_msg = f"Worker '{worker_name}' ({endpoint}) unreachable or failed: {e}"
         logger.error(error_msg)
         raise RuntimeError(error_msg) from e
+
+
+async def sync_jobs_from_workers() -> dict[str, int]:
+    """Sync in-flight jobs from all workers on startup.
+
+    Queries each worker for active jobs and adds them to client tracking if missing.
+    This recovers jobs that were running when the client was restarted.
+
+    Returns:
+        Dict mapping worker name to number of jobs recovered
+    """
+    logger.info("Syncing jobs from workers...")
+    recovered = {}
+
+    for worker in list_workers():
+        worker_name = worker["id"]
+        endpoint = worker["endpoint"]
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{endpoint}/jobs")
+                response.raise_for_status()
+                data = response.json()
+
+            worker_jobs = data.get("jobs", [])
+            count = 0
+
+            for job_data in worker_jobs:
+                job_id = job_data.get("job_id")
+                if not job_id:
+                    continue
+
+                # Skip if we already have this job
+                if job_id in _jobs:
+                    logger.debug(f"Job {job_id} already tracked, updating status")
+                    update_job_status(job_id, job_data)
+                    continue
+
+                # Skip completed/failed jobs (they're done, no need to track)
+                status = job_data.get("status")
+                if status in ("complete", "failed", "cancelled"):
+                    continue
+
+                # Recover the job
+                logger.info(f"Recovering job {job_id} from worker {worker_name} (status: {status})")
+
+                # Create ClientJob from worker data
+                # Note: We don't have full request info, but we can track the job
+                job = ClientJob(
+                    job_id=job_id,
+                    type="image",  # Default, we don't know the actual type
+                    worker_name=worker_name,
+                    worker_endpoint=endpoint,
+                    status=status,
+                    prompt=f"(Recovered from worker - in progress)",
+                    worker_progress=job_data.get("progress", 0.0),
+                    worker_step=job_data.get("current_step", 0),
+                    worker_total_steps=job_data.get("total_steps", 0),
+                    worker_message=job_data.get("message"),
+                    worker_run_id=job_data.get("run_id"),
+                    submitted_at=datetime.now(UTC),
+                )
+
+                _jobs[job_id] = job
+
+                # Start polling for this recovered job
+                asyncio.create_task(poll_and_fetch_job(job_id))
+                count += 1
+
+            recovered[worker_name] = count
+            logger.info(f"Recovered {count} jobs from worker {worker_name}")
+
+        except Exception as e:
+            logger.warning(f"Failed to sync jobs from worker {worker_name}: {e}")
+            recovered[worker_name] = 0
+
+    total = sum(recovered.values())
+    logger.info(f"Job sync complete: recovered {total} total jobs across all workers")
+    return recovered

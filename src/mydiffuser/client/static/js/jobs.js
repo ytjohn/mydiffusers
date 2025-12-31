@@ -51,6 +51,10 @@ async function loadJobs() {
                 actionsHTML = `<a href="/browse?run=${job.local_run_id}">View</a>`;
             } else if (job.status === 'failed' && job.error) {
                 actionsHTML = `<span style="color: #f85149; font-size: 12px;" title="${escapeHtml(job.error)}">Error</span>`;
+            } else if (job.status === 'cancelled') {
+                actionsHTML = `<span style="color: #8b949e; font-size: 12px;">Cancelled</span>`;
+            } else if (job.status === 'queued' || job.status === 'submitted' || job.status === 'processing' || job.status === 'running') {
+                actionsHTML = `<button onclick="cancelJob('${job.job_id}', '${job.worker}')" class="cancel-btn" title="Cancel job">✕ Cancel</button>`;
             }
 
             tableHTML += `
@@ -112,12 +116,39 @@ function getTimeAgo(date) {
 }
 
 function formatETA(seconds) {
-    if (seconds < 60) {
-        return `${Math.round(seconds)}s`;
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const minutes = seconds / 60;
+    if (minutes < 60) return `${minutes.toFixed(1)}m`;
+    const hours = minutes / 60;
+    return `${hours.toFixed(1)}h`;
+}
+
+async function cancelJob(jobId, workerName) {
+    if (!confirm(`Cancel this job?\n\nThis will stop generation between diffusion steps. The partial result will not be saved.`)) {
+        return;
     }
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    return `${mins}m ${secs}s`;
+
+    try {
+        // Call client API to cancel the job
+        const response = await fetch(`/api/jobs/${jobId}/cancel`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.detail || 'Cancellation failed');
+        }
+
+        alert(`Cancellation requested for job ${jobId}\n\nThe job will stop between diffusion steps.`);
+
+        // Refresh jobs immediately to show updated status
+        loadJobs();
+
+    } catch (error) {
+        console.error('Cancel job error:', error);
+        alert(`Failed to cancel job: ${error.message}`);
+    }
 }
 
 // Initial load
