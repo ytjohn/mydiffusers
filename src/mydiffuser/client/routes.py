@@ -90,6 +90,39 @@ async def get_worker_capabilities(worker_name: str):
         )
 
 
+@router.post("/workers/{worker_name}/unload/{model_type}")
+async def unload_worker_model(worker_name: str, model_type: str):
+    """Unload a specific model from a worker (proxied to worker).
+
+    Args:
+        worker_name: Worker identifier (e.g., "local", "remote")
+        model_type: Type of model to unload ("image", "video", "assistant")
+
+    Returns:
+        Status dict with memory info
+    """
+    if worker_name not in WORKERS:
+        raise HTTPException(status_code=404, detail=f"Worker '{worker_name}' not found")
+
+    worker_config = WORKERS[worker_name]
+    endpoint = worker_config["endpoint"]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(f"{endpoint}/unload/{model_type}")
+            response.raise_for_status()
+            return response.json()
+
+    except httpx.HTTPError as e:
+        logger.error(f"Worker {worker_name} unload failed: {e}")
+        # Try to extract error detail from response
+        try:
+            error_detail = e.response.json().get("detail", str(e))
+        except:
+            error_detail = str(e)
+        raise HTTPException(status_code=502, detail=error_detail)
+
+
 @router.post("/jobs/image")
 async def submit_image_job(
     prompt: Annotated[str, Form()],

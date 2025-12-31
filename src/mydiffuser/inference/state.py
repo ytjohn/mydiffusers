@@ -264,6 +264,72 @@ def unload_all_models() -> dict:
     return result
 
 
+def unload_model(model_type: Literal["image", "video", "assistant"]) -> dict:
+    """Unload a specific model and free its GPU memory.
+
+    Args:
+        model_type: Type of model to unload ("image", "video", or "assistant")
+
+    Returns:
+        Dict with status and memory info
+
+    Raises:
+        ValueError: If model_type is invalid
+    """
+    global image_generator, video_generator, prompt_assistant, _active_model
+
+    if model_type == "image":
+        if image_generator is None:
+            return {"status": "ok", "message": "Image model not loaded"}
+        logger.info("Unloading image generator...")
+        image_generator.unload()
+        image_generator = None
+        if _active_model == "image":
+            _active_model = None
+        message = "Image model unloaded"
+
+    elif model_type == "video":
+        if video_generator is None:
+            return {"status": "ok", "message": "Video model not loaded"}
+        logger.info("Unloading video generator...")
+        video_generator.unload()
+        video_generator = None
+        if _active_model == "video":
+            _active_model = None
+        message = "Video model unloaded"
+
+    elif model_type == "assistant":
+        if prompt_assistant is None:
+            return {"status": "ok", "message": "Assistant model not loaded"}
+        logger.info("Unloading prompt assistant...")
+        prompt_assistant.unload()
+        prompt_assistant = None
+        if _active_model == "assistant":
+            _active_model = None
+        message = "Assistant model unloaded"
+
+    else:
+        raise ValueError(f"Invalid model_type: {model_type}")
+
+    # Cleanup GPU memory
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+    result = {"status": "ok", "message": message}
+
+    if torch.cuda.is_available():
+        free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+        total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+        result["gpu_memory"] = {
+            "free_gib": round(free_mem, 1),
+            "total_gib": round(total_mem, 1),
+        }
+
+    return result
+
+
 # Re-export shutdown functions for backwards compatibility
 from mydiffuser.shutdown import (
     request_shutdown,

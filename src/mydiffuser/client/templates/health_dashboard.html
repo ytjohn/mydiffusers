@@ -332,6 +332,48 @@
     color: #f85149;
     font-weight: 600;
 }
+
+.model-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.unload-btn {
+    background: #da3633;
+    color: #fff;
+    border: none;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    text-transform: uppercase;
+}
+
+.unload-btn:hover {
+    background: #f85149;
+}
+
+.unload-btn:disabled {
+    background: #484f58;
+    color: #8b949e;
+    cursor: not-allowed;
+}
+
+.info-icon {
+    display: inline-block;
+    color: #8b949e;
+    font-size: 11px;
+    margin-left: 6px;
+    cursor: help;
+    vertical-align: middle;
+}
+
+.info-icon:hover {
+    color: #58a6ff;
+}
 </style>
 
 <script src="/static/js/health_dashboard.js"></script>

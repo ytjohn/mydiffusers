@@ -144,6 +144,38 @@ def create_worker_app() -> FastAPI:
 
         return caps
 
+    @app.post("/unload/{model_type}")
+    async def unload_model_endpoint(model_type: str):
+        """Unload a specific model to free GPU memory.
+
+        Args:
+            model_type: Type of model to unload ("image", "video", or "assistant")
+
+        Returns:
+            Status dict with memory info
+        """
+        # Check if there's a running job
+        if job_queue.get_current_job_id():
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot unload model while a job is running"
+            )
+
+        # Validate model type
+        if model_type not in ["image", "video", "assistant"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model_type: {model_type}. Must be 'image', 'video', or 'assistant'"
+            )
+
+        try:
+            from mydiffuser.inference.state import unload_model
+            result = unload_model(model_type)
+            return result
+        except Exception as e:
+            logger.error(f"Failed to unload {model_type} model: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/assist/analyze")
     async def analyze_image_for_prompt_improvement(
         image: UploadFile = File(...),

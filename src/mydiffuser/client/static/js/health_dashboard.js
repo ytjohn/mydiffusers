@@ -141,7 +141,10 @@ function renderWorkerCards(workers) {
             // Active Model
             html += `
                 <div class="worker-section">
-                    <div class="section-title">Active Model</div>
+                    <div class="section-title">
+                        Active Model
+                        <span class="info-icon" title="The model that was most recently used or loaded. Only one model can be active at a time.">ⓘ</span>
+                    </div>
             `;
 
             if (h.active_model) {
@@ -154,25 +157,58 @@ function renderWorkerCards(workers) {
 
             // Models Loaded (memory status)
             if (h.models_loaded) {
+                const hasRunningJob = h.running_job !== null;
+
                 html += `
                     <div class="worker-section">
-                        <div class="section-title">Models in Memory</div>
+                        <div class="section-title">
+                            Models in Memory
+                            <span class="info-icon" title="All models currently loaded in GPU memory. Multiple models can coexist (e.g., image + assistant = 34GB). Use 'Unload' to free GPU memory.">ⓘ</span>
+                        </div>
                         <div class="capabilities-list">
                 `;
 
                 if (h.models_loaded.image) {
-                    html += `<span class="capability-tag">Image</span>`;
+                    html += `
+                        <span class="capability-tag model-badge">
+                            Image
+                            <button class="unload-btn"
+                                    onclick="unloadModel('${worker.config.id}', 'image')"
+                                    ${hasRunningJob ? 'disabled' : ''}>
+                                Unload
+                            </button>
+                        </span>`;
                 }
                 if (h.models_loaded.video) {
-                    html += `<span class="capability-tag video">Video</span>`;
+                    html += `
+                        <span class="capability-tag video model-badge">
+                            Video
+                            <button class="unload-btn"
+                                    onclick="unloadModel('${worker.config.id}', 'video')"
+                                    ${hasRunningJob ? 'disabled' : ''}>
+                                Unload
+                            </button>
+                        </span>`;
                 }
                 if (h.models_loaded.assistant) {
-                    html += `<span class="capability-tag assist">Assistant</span>`;
+                    html += `
+                        <span class="capability-tag assist model-badge">
+                            Assistant
+                            <button class="unload-btn"
+                                    onclick="unloadModel('${worker.config.id}', 'assistant')"
+                                    ${hasRunningJob ? 'disabled' : ''}>
+                                Unload
+                            </button>
+                        </span>`;
                 }
 
                 const loadedCount = Object.values(h.models_loaded).filter(Boolean).length;
                 if (loadedCount === 0) {
                     html += `<span style="color: #8b949e; font-size: 13px;">No models loaded</span>`;
+                } else if (hasRunningJob) {
+                    html += `<div style="color: #f2cc60; font-size: 11px; margin-top: 8px;">
+                        ⚠ Models locked while job is running
+                    </div>`;
                 }
 
                 html += `
@@ -365,5 +401,35 @@ async function triggerBackfill() {
         progressDiv.innerHTML = `<p class="backfill-error">✗ Error: ${escapeHtml(error.message)}</p>`;
         btn.disabled = false;
         btn.textContent = 'Run Backfill';
+    }
+}
+
+// Unload model function
+async function unloadModel(workerId, modelType) {
+    if (!confirm(`Unload ${modelType} model?\n\nThis will free GPU memory but the model will need to be reloaded for the next ${modelType} job.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/workers/${workerId}/unload/${modelType}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Unload failed');
+        }
+
+        const result = await response.json();
+
+        // Show success message
+        alert(`✓ ${result.message}\n\nGPU Memory: ${result.gpu_memory?.free_gib || 'N/A'} GiB free / ${result.gpu_memory?.total_gib || 'N/A'} GiB total`);
+
+        // Refresh health data to show updated state
+        loadHealthData();
+
+    } catch (error) {
+        console.error('Unload error:', error);
+        alert(`✗ Failed to unload ${modelType} model: ${error.message}`);
     }
 }
