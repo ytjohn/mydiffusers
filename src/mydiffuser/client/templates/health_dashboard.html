@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}Worker Health - MyDiffuser{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>⚡ Worker Health Dashboard</h1>
+
+    <div class="nav">
+        <a href="/">Generate Image</a>
+        <a href="/generate/video">Generate Video</a>
+        <a href="/browse">Browse</a>
+        <a href="/jobs">Jobs</a>
+    </div>
+
+    <div class="info">
+        <strong>Real-time worker monitoring</strong> - GPU status, queue depth, and active models.
+        <span id="refreshInfo" style="float: right; font-size: 12px;">Loading...</span>
+    </div>
+
+    <div id="workersContainer" class="workers-grid">
+        <div class="loading-state">
+            <p>Loading worker health data...</p>
+        </div>
+    </div>
+</div>
+
+<style>
+.workers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.worker-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 20px;
+    transition: border-color 0.3s;
+}
+
+.worker-card.online {
+    border-color: #238636;
+}
+
+.worker-card.offline {
+    border-color: #f85149;
+    opacity: 0.6;
+}
+
+.worker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #30363d;
+}
+
+.worker-name {
+    font-size: 1.3em;
+    font-weight: 600;
+    color: #e6edf3;
+}
+
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.online {
+    background: #3fb950;
+}
+
+.status-indicator.offline {
+    background: #f85149;
+    animation: none;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.status-label {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-label.online {
+    background: #1a3d2a;
+    color: #3fb950;
+}
+
+.status-label.offline {
+    background: #3d1a1a;
+    color: #f85149;
+}
+
+.worker-section {
+    margin: 15px 0;
+}
+
+.section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 14px;
+}
+
+.metric-label {
+    color: #8b949e;
+}
+
+.metric-value {
+    color: #e6edf3;
+    font-weight: 500;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.gpu-memory-bar {
+    width: 100%;
+    height: 30px;
+    background: #21262d;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    margin-top: 8px;
+}
+
+.gpu-memory-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #238636 0%, #2ea043 50%, #f2cc60 80%, #f85149 95%);
+    transition: width 0.5s ease;
+}
+
+.gpu-memory-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 12px;
+    font-weight: 600;
+    color: #e6edf3;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+.queue-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.queue-badge.queued {
+    background: #1a3d5c;
+    color: #58a6ff;
+}
+
+.queue-badge.running {
+    background: #3d2a1a;
+    color: #f2cc60;
+}
+
+.capabilities-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.capability-tag {
+    background: #21262d;
+    color: #8b949e;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.capability-tag.video {
+    background: #2a1d3d;
+    color: #bc8cff;
+}
+
+.active-model-badge {
+    background: #2a1d3d;
+    color: #bc8cff;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    display: inline-block;
+    margin-top: 6px;
+}
+
+.loading-state, .error-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #8b949e;
+    grid-column: 1 / -1;
+}
+
+.error-state {
+    color: #f85149;
+}
+
+.error-details {
+    font-size: 12px;
+    font-family: 'Monaco', 'Menlo', monospace;
+    margin-top: 10px;
+    color: #8b949e;
+}
+</style>
+
+<script src="/static/js/health_dashboard.js"></script>
+{% endblock %}
