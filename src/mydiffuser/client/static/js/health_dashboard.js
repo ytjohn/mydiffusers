@@ -243,3 +243,98 @@ window.addEventListener('beforeunload', () => {
         clearInterval(refreshInterval);
     }
 });
+
+// Backfill function
+async function triggerBackfill() {
+    const btn = document.getElementById('backfillBtn');
+    const statusDiv = document.getElementById('backfillStatus');
+    const progressDiv = document.getElementById('backfillProgress');
+
+    if (!confirm('Run database backfill?\n\nThis will read all meta.json files and populate missing parameters in the database. This may take a minute.')) {
+        return;
+    }
+
+    // Disable button and show status
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    statusDiv.style.display = 'block';
+    progressDiv.innerHTML = '<p>Starting backfill...</p>';
+
+    try {
+        // Trigger backfill
+        const formData = new FormData();
+        formData.append('force_refresh', 'false');
+
+        const response = await fetch('/api/admin/backfill', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        progressDiv.innerHTML = '<p>Backfill started. Checking status...</p>';
+
+        // Poll for status
+        let attempts = 0;
+        const maxAttempts = 60;  // 60 seconds max
+        const pollInterval = setInterval(async () => {
+            attempts++;
+
+            try {
+                const statusResponse = await fetch('/api/admin/backfill/status');
+                const statusData = await statusResponse.json();
+
+                if (!statusData.running && statusData.stats) {
+                    // Backfill complete
+                    clearInterval(pollInterval);
+
+                    const stats = statusData.stats;
+                    const successClass = stats.errors === 0 ? 'backfill-success' : '';
+
+                    progressDiv.innerHTML = `
+                        <p class="${successClass}">✓ Backfill complete!</p>
+                        <p style="margin-top: 10px;">
+                            • Total runs: ${stats.total}<br>
+                            • Updated: ${stats.updated}<br>
+                            • Errors: ${stats.errors}
+                        </p>
+                        ${stats.errors > 0 ? `
+                            <details style="margin-top: 10px;">
+                                <summary style="cursor: pointer; color: #f85149;">Show errors</summary>
+                                <div style="margin-top: 8px; font-size: 11px;">
+                                    ${stats.error_details.slice(0, 10).map(e => `• ${escapeHtml(e)}`).join('<br>')}
+                                    ${stats.error_details.length > 10 ? `<br>• ...and ${stats.error_details.length - 10} more` : ''}
+                                </div>
+                            </details>
+                        ` : ''}
+                    `;
+
+                    btn.disabled = false;
+                    btn.textContent = 'Run Backfill';
+
+                } else if (attempts >= maxAttempts) {
+                    // Timeout
+                    clearInterval(pollInterval);
+                    progressDiv.innerHTML = '<p class="backfill-error">⚠ Status check timed out. Backfill may still be running.</p>';
+                    btn.disabled = false;
+                    btn.textContent = 'Run Backfill';
+                } else {
+                    // Still running
+                    progressDiv.innerHTML = `<p>Backfill in progress... (${attempts}s)</p>`;
+                }
+
+            } catch (error) {
+                console.error('Status check error:', error);
+            }
+        }, 1000);
+
+    } catch (error) {
+        console.error('Backfill error:', error);
+        progressDiv.innerHTML = `<p class="backfill-error">✗ Error: ${escapeHtml(error.message)}</p>`;
+        btn.disabled = false;
+        btn.textContent = 'Run Backfill';
+    }
+}

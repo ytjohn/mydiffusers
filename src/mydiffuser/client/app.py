@@ -96,6 +96,10 @@ def create_app() -> FastAPI:
     from mydiffuser.client import health_ui
     app.include_router(health_ui.router)
 
+    # Include admin API routes (backfill, etc.)
+    from mydiffuser.client import admin_routes
+    app.include_router(admin_routes.router)
+
     # Mount static files
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -18,6 +18,27 @@
         <span id="refreshInfo" style="float: right; font-size: 12px;">Loading...</span>
     </div>
 
+    <!-- Admin Section -->
+    <div class="admin-section">
+        <h3>🛠️ Database Maintenance</h3>
+        <div class="admin-card">
+            <div class="admin-item">
+                <div class="admin-info">
+                    <strong>Backfill Database</strong>
+                    <p style="font-size: 13px; color: #8b949e; margin: 5px 0 0 0;">
+                        Populate missing parameters (height, width, seed, etc.) from meta.json files in all run directories.
+                    </p>
+                </div>
+                <button id="backfillBtn" onclick="triggerBackfill()" class="backfill-btn">
+                    Run Backfill
+                </button>
+            </div>
+            <div id="backfillStatus" class="backfill-status" style="display: none;">
+                <div id="backfillProgress"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="workersContainer" class="workers-grid">
         <div class="loading-state">
             <p>Loading worker health data...</p>
@@ -232,6 +253,78 @@
     font-family: 'Monaco', 'Menlo', monospace;
     margin-top: 10px;
     color: #8b949e;
+}
+
+.admin-section {
+    margin: 20px 0;
+}
+
+.admin-section h3 {
+    color: #e6edf3;
+    margin-bottom: 15px;
+}
+
+.admin-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.admin-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+}
+
+.admin-info {
+    flex: 1;
+}
+
+.backfill-btn {
+    background: #238636;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.backfill-btn:hover {
+    background: #2ea043;
+}
+
+.backfill-btn:disabled {
+    background: #30363d;
+    color: #8b949e;
+    cursor: not-allowed;
+}
+
+.backfill-status {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #30363d;
+}
+
+.backfill-progress {
+    font-size: 13px;
+    color: #8b949e;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.backfill-success {
+    color: #3fb950;
+    font-weight: 600;
+}
+
+.backfill-error {
+    color: #f85149;
+    font-weight: 600;
 }
 </style>
 
