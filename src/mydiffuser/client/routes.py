@@ -21,6 +21,43 @@ async def get_workers():
     return {"workers": list_workers()}
 
 
+@router.get("/workers/{worker_name}/capabilities")
+async def get_worker_capabilities(worker_name: str):
+    """Get capabilities for a specific worker.
+
+    Args:
+        worker_name: Worker name (e.g., "local", "remote")
+
+    Returns:
+        Worker capabilities including available video models
+
+    Raises:
+        HTTPException: If worker doesn't exist or is unreachable
+    """
+    if worker_name not in WORKERS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown worker: {worker_name}. Available: {list(WORKERS.keys())}",
+        )
+
+    worker_config = WORKERS[worker_name]
+    endpoint = worker_config["endpoint"]
+
+    # Query worker capabilities
+    try:
+        from mydiffuser.client.worker_client import WorkerClient
+
+        with WorkerClient(endpoint, timeout=10.0) as client:
+            caps = client.capabilities(timeout=5.0)
+            return caps
+    except Exception as e:
+        logger.warning(f"Failed to fetch capabilities from {worker_name}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Worker {worker_name} is unreachable: {e}",
+        )
+
+
 @router.post("/jobs/image")
 async def submit_image_job(
     prompt: Annotated[str, Form()],
@@ -30,6 +67,7 @@ async def submit_image_job(
     seed: Annotated[int, Form()] = 42,
     steps: Annotated[int, Form()] = 4,
     guidance: Annotated[float, Form()] = 0.0,
+    tags: Annotated[str, Form()] = "[]",
 ):
     """Submit an image generation job to a worker.
 
@@ -52,6 +90,13 @@ async def submit_image_job(
             detail=f"Unknown worker: {worker}. Available: {list(WORKERS.keys())}",
         )
 
+    # Parse tags from JSON string
+    import json
+    try:
+        tags_list = json.loads(tags)
+    except json.JSONDecodeError:
+        tags_list = []
+
     try:
         job_id = await jobs.submit_image_job(
             worker_name=worker,
@@ -61,6 +106,7 @@ async def submit_image_job(
             seed=seed,
             num_inference_steps=steps,
             guidance_scale=guidance,
+            tags=tags_list,
         )
 
         return {
@@ -86,6 +132,9 @@ async def submit_video_job(
     fps: Annotated[int, Form()] = 12,
     steps: Annotated[int, Form()] = 15,
     guidance: Annotated[float, Form()] = 3.0,
+    resolution: Annotated[str, Form()] = "480p",
+    model_size: Annotated[str | None, Form()] = None,
+    tags: Annotated[str, Form()] = "[]",
 ):
     """Submit a video generation job to a worker.
 
@@ -143,6 +192,13 @@ async def submit_video_job(
             detail="Either source_run_id or image file must be provided",
         )
 
+    # Parse tags from JSON string
+    import json
+    try:
+        tags_list = json.loads(tags)
+    except json.JSONDecodeError:
+        tags_list = []
+
     try:
         job_id = await jobs.submit_video_job(
             worker_name=worker,
@@ -154,6 +210,9 @@ async def submit_video_job(
             fps=fps,
             num_inference_steps=steps,
             guidance_scale=guidance,
+            resolution=resolution,
+            model_size=model_size,
+            tags=tags_list,
         )
 
         return {

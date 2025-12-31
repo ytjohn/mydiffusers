@@ -34,10 +34,16 @@ def _create_step_callback(job_id: str, total_steps: int):
     """Create a callback function for PyTorch pipeline step updates."""
 
     def callback(pipe, step_index: int, timestep, callback_kwargs):
-        # Update shared progress state (non-blocking)
-        state.update_step(
-            job_id, step_index + 1, f"Inference step {step_index + 1}/{total_steps}"
-        )
+        # Check if this is a post-processing phase (VAE decode)
+        if isinstance(callback_kwargs, dict) and callback_kwargs.get("phase") == "vae_decode":
+            state.update_step(
+                job_id, total_steps, f"Post-processing (VAE decode)..."
+            )
+        else:
+            # Normal inference step
+            state.update_step(
+                job_id, step_index + 1, f"Inference step {step_index + 1}/{total_steps}"
+            )
         return callback_kwargs
 
     return callback
@@ -111,6 +117,7 @@ def execute_image_job(
             "run_id": rid,
             "timestamp": datetime.now(UTC).isoformat(),
             "prompt": request.prompt,
+            "tags": request.tags,
             "source_run_id": None,
             "backend": generator.model_id if hasattr(generator, "model_id") else "z-image",
             "params": {
@@ -186,7 +193,8 @@ def execute_video_job(
         logger.info(
             f"[{job_id}] Starting video generation: preset={request.preset} "
             f"fps={params['fps']} duration={params['duration_seconds']}s "
-            f"steps={params['num_inference_steps']} seed={request.seed}"
+            f"steps={params['num_inference_steps']} resolution={params.get('resolution', '480p')} "
+            f"seed={request.seed}"
         )
 
         # Create callback for progress updates
@@ -204,6 +212,7 @@ def execute_video_job(
             seed=request.seed,
             output_path=output_path,
             run_id=rid,
+            resolution=params.get("resolution", "480p"),
             callback_on_step_end=callback,
         )
 
@@ -217,11 +226,13 @@ def execute_video_job(
             "run_id": rid,
             "timestamp": datetime.now(UTC).isoformat(),
             "prompt": request.prompt,
+            "tags": request.tags,
             "source_run_id": request.source_run_id,
             "backend": generator.model_id if hasattr(generator, "model_id") else "wan2.2",
             "params": {
                 "preset": request.preset,
                 "seed": request.seed,
+                "resolution": params.get("resolution", "480p"),
                 "fps": params["fps"],
                 "duration_seconds": params["duration_seconds"],
                 "num_inference_steps": params["num_inference_steps"],

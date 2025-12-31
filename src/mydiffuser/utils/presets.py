@@ -41,6 +41,7 @@ VIDEO_PRESETS = {
     # Fast iteration - fewer steps
     "draft": {
         "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "resolution": "480p",
         "fps": 12,
         "duration_seconds": 3,
         "num_inference_steps": 15,
@@ -49,6 +50,7 @@ VIDEO_PRESETS = {
     # Balanced quality
     "final": {
         "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "resolution": "720p",
         "fps": 16,
         "duration_seconds": 5,
         "num_inference_steps": 30,
@@ -57,6 +59,7 @@ VIDEO_PRESETS = {
     # Higher quality - more steps
     "hq": {
         "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "resolution": "720p",
         "fps": 24,
         "duration_seconds": 7,
         "num_inference_steps": 50,
@@ -160,6 +163,8 @@ def apply_video_preset(req: "GenerateVideoRequest") -> dict:
         base["num_inference_steps"] = req.num_inference_steps
     if req.guidance_scale is not None:
         base["guidance_scale"] = req.guidance_scale
+    if req.resolution is not None:
+        base["resolution"] = req.resolution
 
     # Validation - cast to proper types for comparison
     fps_val = base["fps"]

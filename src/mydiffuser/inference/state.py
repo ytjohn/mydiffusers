@@ -1,4 +1,9 @@
-"""Shared server state to avoid circular imports."""
+"""Shared inference state for model management.
+
+This module manages GPU model loading, unloading, and lazy loading
+for both image and video generation. Used by both the worker and
+the legacy server.
+"""
 
 import asyncio
 import gc

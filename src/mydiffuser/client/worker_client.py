@@ -53,6 +53,29 @@ class WorkerClient:
         response.raise_for_status()
         return response.json()
 
+    def capabilities(self, timeout: float = 5.0) -> dict[str, Any]:
+        """Get worker capabilities (lightweight).
+
+        This is a fast endpoint specifically for capability discovery.
+        Use this to determine available video models before submitting jobs.
+
+        Args:
+            timeout: Request timeout in seconds (default 5s)
+
+        Returns:
+            Capabilities dict with:
+            - platform: "rocm" | "cuda" | "cpu"
+            - job_types: ["image", "video"]
+            - video_models: ["5B", "14B"] (if video enabled)
+
+        Raises:
+            httpx.HTTPError: If worker is unreachable
+            httpx.TimeoutException: If worker doesn't respond within timeout
+        """
+        response = self._client.get(f"{self.endpoint}/capabilities", timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+
     def submit_image_job(
         self,
         prompt: str,
@@ -61,6 +84,7 @@ class WorkerClient:
         seed: int,
         num_inference_steps: int,
         guidance_scale: float,
+        tags: list[str],
     ) -> str:
         """Submit an image generation job to the worker.
 
@@ -87,6 +111,7 @@ class WorkerClient:
             "seed": seed,
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
+            "tags": tags,
         }
 
         response = self._client.post(
@@ -112,6 +137,9 @@ class WorkerClient:
         fps: int,
         num_inference_steps: int,
         guidance_scale: float,
+        resolution: str = "480p",
+        model_size: str | None = None,
+        tags: list[str] | None = None,
     ) -> str:
         """Submit a video generation job to the worker.
 
@@ -124,6 +152,9 @@ class WorkerClient:
             fps: Frames per second
             num_inference_steps: Inference steps
             guidance_scale: Guidance scale
+            resolution: Output resolution (480p or 720p)
+            model_size: Model size (5B or 14B), None for worker default
+            tags: Optional list of tags
 
         Returns:
             Job ID (UUID string)
@@ -133,6 +164,9 @@ class WorkerClient:
         """
         import json
 
+        if tags is None:
+            tags = []
+
         request_data = {
             "prompt": prompt,
             "seed": seed,
@@ -141,7 +175,13 @@ class WorkerClient:
             "fps": fps,
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
+            "resolution": resolution,
+            "tags": tags,
         }
+
+        # Include model_size if specified
+        if model_size:
+            request_data["model_size"] = model_size
 
         # Convert image to bytes
         img_buffer = io.BytesIO()

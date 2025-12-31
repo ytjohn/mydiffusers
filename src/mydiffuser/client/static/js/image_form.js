@@ -57,6 +57,20 @@
             if (params.has('guidance')) {
                 document.getElementById('guidance').value = params.get('guidance');
             }
+            if (params.has('tags')) {
+                const tags = JSON.parse(params.get('tags'));
+                const commonTags = ['nsfw', 'portrait', 'landscape'];
+                // Check common tag checkboxes
+                tags.forEach(tag => {
+                    const cb = document.querySelector(`input[value="${tag}"]`);
+                    if (cb) cb.checked = true;
+                });
+                // Put remaining in custom tags field
+                const customTags = tags.filter(t => !commonTags.includes(t));
+                if (customTags.length) {
+                    document.getElementById('customTags').value = customTags.join(', ');
+                }
+            }
 
             // Clear query params from URL after loading (cleaner UX)
             if (params.toString()) {
@@ -73,6 +87,16 @@
             const form = document.getElementById('imageForm');
             const formData = new FormData(form);
             const statusDiv = document.getElementById('status');
+
+            // Collect tags from checkboxes and custom text input
+            const tags = [];
+            document.querySelectorAll('input[type="checkbox"][name^="tag_"]').forEach(cb => {
+                if (cb.checked) tags.push(cb.value);
+            });
+            const customTags = document.getElementById('customTags').value
+                .split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+            tags.push(...customTags);
+            formData.append('tags', JSON.stringify(tags));
 
             // Show submitting status
             statusDiv.className = 'progress';
@@ -146,8 +170,25 @@
                         return;
                     }
 
-                    // Update progress
-                    statusSpan.textContent = `${job.status} - ${percent}% (step ${step}/${total})`;
+                    // Update progress with ETA if available
+                    let progressText = `${job.status} - ${percent}% (step ${step}/${total})`;
+
+                    if (job.progress.eta_seconds !== null && job.progress.eta_seconds !== undefined) {
+                        const etaSecs = Math.round(job.progress.eta_seconds);
+                        if (etaSecs >= 60) {
+                            const etaMins = Math.floor(etaSecs / 60);
+                            progressText += ` - ETA: ${etaMins}m ${etaSecs % 60}s`;
+                        } else {
+                            progressText += ` - ETA: ${etaSecs}s`;
+                        }
+
+                        // Show seconds per iteration for context
+                        if (job.progress.seconds_per_iteration) {
+                            progressText += ` (${job.progress.seconds_per_iteration.toFixed(1)}s/it)`;
+                        }
+                    }
+
+                    statusSpan.textContent = progressText;
 
                     // Continue polling
                     setTimeout(poll, 2000);

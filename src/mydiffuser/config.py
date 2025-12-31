@@ -26,30 +26,49 @@ except ImportError:
 # ============================================================================
 
 def _detect_platform() -> str:
-    """Detect GPU platform: 'rocm', 'cuda', or 'cpu'."""
+    """Detect GPU platform: 'rocm', 'cuda', or 'cpu'.
+
+    WARNING: This makes GPU calls and can hang if GPU driver is in bad state.
+    Only call this when actually needed (worker startup, not client).
+    """
     if not _TORCH_AVAILABLE or torch is None:
         return "cpu"
 
-    if not torch.cuda.is_available():
+    # Skip detection if explicitly disabled (for client or when GPU is hung)
+    if os.environ.get("MYDIFFUSER_SKIP_GPU_DETECT") == "1":
         return "cpu"
 
-    # Check if this is ROCm (AMD) vs CUDA (NVIDIA)
-    # ROCm has torch.version.hip set; CUDA has torch.version.cuda
-    if hasattr(torch.version, 'hip') and torch.version.hip is not None:
-        return "rocm"
-
-    # Double-check via device name (fallback)
     try:
-        name = torch.cuda.get_device_name(0).lower()
-        if "amd" in name or "radeon" in name or "gfx" in name:
+        if not torch.cuda.is_available():
+            return "cpu"
+
+        # Check if this is ROCm (AMD) vs CUDA (NVIDIA)
+        # ROCm has torch.version.hip set; CUDA has torch.version.cuda
+        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
             return "rocm"
-    except Exception:
-        pass
 
-    return "cuda"
+        # Double-check via device name (fallback)
+        try:
+            name = torch.cuda.get_device_name(0).lower()
+            if "amd" in name or "radeon" in name or "gfx" in name:
+                return "rocm"
+        except Exception:
+            pass
+
+        return "cuda"
+    except Exception as e:
+        # If GPU detection fails (hung driver, etc), default to cpu
+        logger.warning(f"GPU detection failed: {e}. Defaulting to CPU mode.")
+        return "cpu"
 
 
-PLATFORM = _detect_platform()
+# Platform detection - wrapped in try/except to prevent hangs
+try:
+    PLATFORM = _detect_platform()
+except Exception as e:
+    logger.error(f"Platform detection failed: {e}. Defaulting to CPU.")
+    PLATFORM = "cpu"
+
 IS_ROCM = PLATFORM == "rocm"
 IS_CUDA = PLATFORM == "cuda"
 IS_CPU = PLATFORM == "cpu"
@@ -60,7 +79,14 @@ IS_CPU = PLATFORM == "cpu"
 # ============================================================================
 
 # Device is always "cuda" for both ROCm and CUDA (ROCm uses CUDA API)
-DEVICE = "cuda" if (_TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()) else "cpu"
+# Skip GPU check if detection is disabled
+if os.environ.get("MYDIFFUSER_SKIP_GPU_DETECT") == "1":
+    DEVICE = "cpu"
+else:
+    try:
+        DEVICE = "cuda" if (_TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()) else "cpu"
+    except Exception:
+        DEVICE = "cpu"
 
 # --- Main inference dtype ---
 # Both ROCm and CUDA: bf16 is a good default (stable, fast)
@@ -186,6 +212,45 @@ VIDEO_MODELS = {
     "5B": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
 }
 VIDEO_MODEL_ID = VIDEO_MODELS.get(VIDEO_MODEL_SIZE, VIDEO_MODELS["5B"])
+
+
+def get_available_video_models() -> list[str]:
+    """Get list of video models available on this worker.
+
+    Auto-excludes 14B on ROCm due to VRAM constraints (~70-80GB needed).
+    Can be overridden with MYDIFFUSER_ALLOWED_VIDEO_MODELS="5B,14B".
+
+    Returns:
+        List of available model sizes (e.g., ["5B"] or ["5B", "14B"])
+    """
+    # Allow manual override via environment variable
+    override = os.environ.get("MYDIFFUSER_ALLOWED_VIDEO_MODELS")
+    if override:
+        models = [m.strip() for m in override.split(",")]
+        return [m for m in models if m in VIDEO_MODELS]
+
+    # If GPU detection is skipped (client mode), return conservative default
+    if os.environ.get("MYDIFFUSER_SKIP_GPU_DETECT") == "1":
+        return ["5B"]  # Safe default
+
+    # Auto-detection based on platform
+    available = ["5B"]  # 5B works everywhere (~10GB VRAM)
+
+    # Only enable 14B on CUDA (NVIDIA) by default
+    # ROCm (AMD) typically has insufficient VRAM for 14B (~70-80GB needed)
+    if IS_CUDA:
+        # Check if we have enough VRAM for 14B (need ~28GB minimum)
+        if _TORCH_AVAILABLE and torch is not None:
+            try:
+                if torch.cuda.is_available():
+                    mem_info = torch.cuda.mem_get_info()
+                    total_gb = mem_info[1] / (1024**3)
+                    if total_gb >= 24:  # Conservative threshold (14B needs ~28GB)
+                        available.append("14B")
+            except Exception:
+                pass  # If we can't check, don't add 14B
+
+    return available
 
 OUTPUT_TYPE = "pil"
 

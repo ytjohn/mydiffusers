@@ -5,6 +5,9 @@ let totalPages = 1;
 let currentFilter = "all";
 let currentRunId = null;
 let currentRunData = null;
+let availableTags = [];
+let selectedTags = new Set();  // Tags to INCLUDE (show ONLY these)
+let showNsfw = false;           // NSFW toggle state
 
 const contentEl = document.getElementById("content");
 const paginationEl = document.getElementById("pagination");
@@ -38,11 +41,90 @@ filterTabs.forEach(tab => {
   });
 });
 
+// Tag filter functions
+async function loadTagFilters() {
+  try {
+    const resp = await fetch('/api/runs/tags');
+    const data = await resp.json();
+    availableTags = data.tags;
+
+    // Restore state from localStorage
+    const savedTags = localStorage.getItem('selectedTags');
+    const savedNsfw = localStorage.getItem('showNsfw');
+
+    selectedTags = savedTags ? new Set(JSON.parse(savedTags)) : new Set();
+    showNsfw = savedNsfw === 'true';
+
+    renderTagFilters();
+  } catch (error) {
+    console.error('Failed to load tags:', error);
+  }
+}
+
+function renderTagFilters() {
+  const container = document.getElementById('tagFilters');
+  const label = container.querySelector('span');
+  container.innerHTML = '';
+  container.appendChild(label);
+
+  // Render regular tags (excluding nsfw)
+  const regularTags = availableTags.filter(t => t !== 'nsfw');
+  regularTags.forEach(tag => {
+    const isSelected = selectedTags.has(tag);
+    const toggle = document.createElement('div');
+    toggle.className = `tag-filter-toggle ${isSelected ? 'active' : ''}`;
+    toggle.innerHTML = `
+      <input type="checkbox" ${isSelected ? 'checked' : ''}
+             style="margin-right: 4px;" id="tag_${tag}">
+      <span>${tag}</span>
+    `;
+
+    toggle.addEventListener('click', () => {
+      if (selectedTags.has(tag)) {
+        selectedTags.delete(tag);
+      } else {
+        selectedTags.add(tag);
+      }
+      localStorage.setItem('selectedTags', JSON.stringify([...selectedTags]));
+      renderTagFilters();
+      currentPage = 1;
+      loadRuns();
+    });
+
+    container.appendChild(toggle);
+  });
+
+  // Render NSFW toggle (special styling)
+  if (availableTags.includes('nsfw')) {
+    const nsfwToggle = document.createElement('div');
+    nsfwToggle.className = `tag-filter-toggle nsfw-toggle ${showNsfw ? 'active' : ''}`;
+    nsfwToggle.style.borderColor = showNsfw ? '#f85149' : 'var(--border)';
+    nsfwToggle.style.background = showNsfw ? '#f85149' : 'var(--bg)';
+    nsfwToggle.innerHTML = `
+      <input type="checkbox" ${showNsfw ? 'checked' : ''}
+             style="margin-right: 4px;" id="tag_nsfw">
+      <span>Show NSFW</span>
+    `;
+
+    nsfwToggle.addEventListener('click', () => {
+      showNsfw = !showNsfw;
+      localStorage.setItem('showNsfw', showNsfw.toString());
+      renderTagFilters();
+      currentPage = 1;
+      loadRuns();
+    });
+
+    container.appendChild(nsfwToggle);
+  }
+}
+
 async function loadRuns() {
   contentEl.innerHTML = '<div class="loading">Loading...</div>';
 
   try {
-    const resp = await fetch(`/api/runs?type=${currentFilter}&page=${currentPage}&limit=${LIMIT}`);
+    const includeParam = selectedTags.size ? `&include_tags=${[...selectedTags].join(',')}` : '';
+    const nsfwParam = `&show_nsfw=${showNsfw}`;
+    const resp = await fetch(`/api/runs?type=${currentFilter}&page=${currentPage}&limit=${LIMIT}${includeParam}${nsfwParam}`);
     if (!resp.ok) throw new Error("Failed to load runs");
 
     const data = await resp.json();
@@ -62,6 +144,10 @@ async function loadRuns() {
         ? `<div class="thumb-lineage">from ${run.source_run_id.substring(0, 15)}...</div>`
         : "";
 
+      // Generate tag badges
+      const tagBadges = run.tags && run.tags.length ?
+        run.tags.map(t => `<span class="tag-badge ${t === 'nsfw' ? 'nsfw' : 'default'}">${t}</span>`).join(' ') : '';
+
       html += `
         <div class="thumb-card" data-id="${run.id}" data-type="${run.type}">
           <span class="thumb-badge ${badgeClass}">${run.type}</span>
@@ -70,6 +156,7 @@ async function loadRuns() {
             <div class="thumb-timestamp">${run.timestamp}</div>
             <div class="thumb-prompt">${escapeHtml(run.prompt_preview) || "(no prompt)"}</div>
             ${lineageHtml}
+            ${tagBadges ? `<div style="margin-top: 4px;">${tagBadges}</div>` : ''}
           </div>
         </div>
       `;
@@ -153,12 +240,7 @@ async function openModal(runId, runType) {
     if (currentRunData.source_run_id) {
       sourceSection.style.display = "block";
       sourceLink.textContent = `View source: ${currentRunData.source_run_id}`;
-      sourceLink.href = "#";
-      sourceLink.onclick = (e) => {
-        e.preventDefault();
-        closeModal();
-        openModal(currentRunData.source_run_id, "image");
-      };
+      sourceLink.href = `/browse?run=${currentRunData.source_run_id}`;
     }
 
     const params = [
@@ -181,8 +263,78 @@ async function openModal(runId, runType) {
       </div>
     `).join("");
 
+    // Render tags
+    renderModalTags();
+
   } catch (e) {
     modalPrompt.textContent = `Error: ${e.message}`;
+  }
+}
+
+function renderModalTags() {
+  const container = document.getElementById('modalTags');
+  container.innerHTML = '';
+
+  if (!currentRunData.tags || currentRunData.tags.length === 0) {
+    container.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No tags</span>';
+    return;
+  }
+
+  currentRunData.tags.forEach(tag => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    chip.style.background = tag === 'nsfw' ? '#f85149' : 'var(--accent)';
+    chip.innerHTML = `
+      <span>${tag}</span>
+      <button onclick="removeTag('${tag}')" title="Remove tag">&times;</button>
+    `;
+    container.appendChild(chip);
+  });
+}
+
+window.removeTag = async function(tag) {
+  const newTags = currentRunData.tags.filter(t => t !== tag);
+  await updateRunTags(newTags);
+};
+
+document.getElementById('addTagBtn').addEventListener('click', async () => {
+  const input = document.getElementById('newTagInput');
+  const newTag = input.value.trim().toLowerCase();
+
+  if (!newTag) return;
+  if (currentRunData.tags && currentRunData.tags.includes(newTag)) {
+    alert('Tag already exists');
+    return;
+  }
+
+  const newTags = [...(currentRunData.tags || []), newTag];
+  await updateRunTags(newTags);
+  input.value = '';
+});
+
+// Allow Enter key to add tag
+document.getElementById('newTagInput').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('addTagBtn').click();
+  }
+});
+
+async function updateRunTags(newTags) {
+  try {
+    const resp = await fetch(`/api/runs/${currentRunId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: newTags })
+    });
+
+    if (!resp.ok) throw new Error('Failed to update tags');
+
+    currentRunData.tags = newTags;
+    renderModalTags();
+    await loadTagFilters(); // Refresh available tags
+    loadRuns(); // Refresh grid
+  } catch (e) {
+    alert(`Error updating tags: ${e.message}`);
   }
 }
 
@@ -260,7 +412,10 @@ function escapeHtml(text) {
 }
 
 // Initial load
-loadRuns();
+(async () => {
+  await loadTagFilters();
+  loadRuns();
+})();
 
 // Check for URL parameter to open specific run
 const urlParams = new URLSearchParams(window.location.search);

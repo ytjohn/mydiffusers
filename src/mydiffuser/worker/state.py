@@ -31,6 +31,11 @@ class JobProgress:
     completed_at: datetime | None = None
     seconds_elapsed: float | None = None
 
+    # Timing information for ETA calculation
+    last_step_time: datetime | None = None  # When the last step completed
+    seconds_per_iteration: float | None = None  # Average time per iteration
+    eta_seconds: float | None = None  # Estimated time remaining
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -46,6 +51,8 @@ class JobProgress:
             if self.completed_at
             else None,
             "seconds_elapsed": self.seconds_elapsed,
+            "seconds_per_iteration": self.seconds_per_iteration,
+            "eta_seconds": self.eta_seconds,
         }
 
 
@@ -63,12 +70,36 @@ def init_job(job_id: str, total_steps: int) -> None:
 
 
 def update_step(job_id: str, step: int, message: str | None = None) -> None:
-    """Update job progress for a specific step."""
+    """Update job progress for a specific step.
+
+    Automatically calculates iteration time and ETA based on timing.
+    """
     if job_id not in job_progress:
         logger.warning(f"[{job_id}] Cannot update - job not initialized")
         return
 
     prog = job_progress[job_id]
+    now = datetime.now(UTC)
+
+    # Calculate iteration timing
+    if prog.last_step_time and step > 0:
+        # Time since last step
+        step_duration = (now - prog.last_step_time).total_seconds()
+
+        # Update rolling average (weighted toward recent iterations)
+        if prog.seconds_per_iteration is None:
+            prog.seconds_per_iteration = step_duration
+        else:
+            # Exponential moving average (weight=0.3 for new value)
+            prog.seconds_per_iteration = (
+                0.7 * prog.seconds_per_iteration + 0.3 * step_duration
+            )
+
+        # Calculate ETA (remaining steps * avg time per step)
+        remaining_steps = prog.total_steps - step
+        prog.eta_seconds = remaining_steps * prog.seconds_per_iteration
+
+    prog.last_step_time = now
     prog.current_step = step
     prog.progress = step / prog.total_steps if prog.total_steps > 0 else 0.0
     prog.status = "running"
@@ -76,7 +107,15 @@ def update_step(job_id: str, step: int, message: str | None = None) -> None:
     if message:
         prog.message = message
     else:
-        prog.message = f"Step {step}/{prog.total_steps}"
+        # Include ETA in message if available
+        if prog.eta_seconds:
+            eta_mins = prog.eta_seconds / 60
+            if eta_mins >= 1:
+                prog.message = f"Step {step}/{prog.total_steps} (ETA: {eta_mins:.1f}m)"
+            else:
+                prog.message = f"Step {step}/{prog.total_steps} (ETA: {prog.eta_seconds:.0f}s)"
+        else:
+            prog.message = f"Step {step}/{prog.total_steps}"
 
     logger.debug(f"[{job_id}] Progress: {prog.progress:.1%} - {prog.message}")
 

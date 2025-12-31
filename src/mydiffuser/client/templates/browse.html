@@ -43,33 +43,25 @@
       margin: 0 auto;
     }
 
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 24px;
-    }
-
     h1 {
-      font-size: 1.5rem;
-      font-weight: 600;
-      margin: 0;
-      letter-spacing: -0.02em;
+      font-size: 2em;
+      margin-bottom: 0.5em;
+      color: #58a6ff;
     }
 
-    .subtitle {
-      color: var(--text-muted);
-      font-size: 0.85rem;
+    .nav {
+      margin-bottom: 2em;
+      padding-bottom: 1em;
+      border-bottom: 1px solid #30363d;
     }
 
-    .nav-link {
-      color: var(--accent);
+    .nav a {
+      color: #58a6ff;
       text-decoration: none;
-      font-size: 0.9rem;
+      margin-right: 1em;
     }
 
-    .nav-link:hover {
-      color: var(--accent-hover);
+    .nav a:hover {
       text-decoration: underline;
     }
 
@@ -461,22 +453,97 @@
       color: var(--text-muted);
       padding: 40px;
     }
+    /* Tag styles */
+    .tag-badge {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      display: inline-block;
+      margin: 2px;
+    }
+    .tag-badge.nsfw {
+      background: #f85149;
+      color: white;
+    }
+    .tag-badge.default {
+      background: var(--accent);
+      color: white;
+    }
+    .tag-filter-toggle {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      background: var(--bg);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .tag-filter-toggle.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .tag-filter-toggle.excluded {
+      background: var(--bg-dark);
+      color: var(--text-muted);
+      text-decoration: line-through;
+    }
+    .tag-filter-toggle.nsfw-toggle {
+      font-weight: 600;
+    }
+    .tag-filter-toggle.nsfw-toggle.active {
+      background: #f85149;
+      border-color: #f85149;
+      color: white;
+    }
+    .tag-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: var(--accent);
+      color: white;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      margin: 2px;
+    }
+    .tag-chip button {
+      background: none;
+      border: none;
+      color: white;
+      cursor: pointer;
+      padding: 0;
+      font-size: 1rem;
+      line-height: 1;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
-      <div>
-        <h1>Browse History</h1>
-        <p class="subtitle">View and manage past generations</p>
-      </div>
-      <a href="/" class="nav-link">← Back to Generator</a>
-    </header>
+    <h1>📁 Browse History</h1>
+
+    <div class="nav">
+      <a href="/">← Generate Image</a>
+      <a href="/generate/video">Generate Video</a>
+      <a href="/jobs">Job Queue</a>
+      <a href="/health">Health Check</a>
+    </div>
 
     <div class="filter-tabs" id="filterTabs">
       <button class="filter-tab active" data-type="all">All</button>
       <button class="filter-tab" data-type="image">Images</button>
       <button class="filter-tab" data-type="video">Videos</button>
+    </div>
+
+    <div id="tagFilters" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+      <span style="color: var(--text-muted); font-size: 0.8rem;">Filter by tags:</span>
+      <!-- Dynamically populated by JavaScript -->
     </div>
 
     <div id="content">
@@ -516,6 +583,21 @@
             <h3>Parameters</h3>
             <div class="params-grid" id="modalParams"></div>
           </div>
+
+          <div class="detail-section">
+            <h3>Tags</h3>
+            <div id="modalTags" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;">
+              <!-- Dynamically populated by JavaScript -->
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="newTagInput" placeholder="Add tag..."
+                     style="flex: 1; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
+              <button id="addTagBtn" style="padding: 6px 12px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                Add
+              </button>
+            </div>
+          </div>
+
           <div class="modal-actions" id="modalActions">
             <button class="btn btn-primary" id="templateBtn">Use as Template</button>
             <button class="btn btn-secondary" id="videoBtn" style="display: none;">Generate Video</button>

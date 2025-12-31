@@ -15,3 +15,10 @@ wheels/
 # Outputs
 outputs/
 archive/
+
+# Environment files with secrets
+.env.lambda
+*.env
+
+# ignore uv.lock because we have to switch between rocm and cuda
+uv.lock

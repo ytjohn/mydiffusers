@@ -62,7 +62,10 @@ async function loadJobs() {
                     <td>
                         <div class="progress-bar">
                             <div class="progress-fill" style="width: ${progress}%"></div>
-                            <div class="progress-text">${job.step} · ${progress}%</div>
+                            <div class="progress-text">
+                                ${job.step} · ${progress}%
+                                ${job.eta_seconds ? ` · ETA ${formatETA(job.eta_seconds)}` : ''}
+                            </div>
                         </div>
                     </td>
                     <td style="font-size: 12px; color: #8b949e;">${timeAgo}</td>
@@ -106,6 +109,15 @@ function getTimeAgo(date) {
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     return `${days}d ago`;
+}
+
+function formatETA(seconds) {
+    if (seconds < 60) {
+        return `${Math.round(seconds)}s`;
+    }
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${mins}m ${secs}s`;
 }
 
 // Initial load

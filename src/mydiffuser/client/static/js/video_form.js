@@ -1,8 +1,8 @@
 // Video presets (populate form fields)
         const VIDEO_PRESETS = {
-            draft: { duration: 3, fps: 12, steps: 15, guidance: 3.0 },
-            final: { duration: 5, fps: 16, steps: 30, guidance: 3.5 },
-            hq: { duration: 7, fps: 24, steps: 50, guidance: 4.0 },
+            draft: { duration: 3, fps: 12, steps: 15, guidance: 3.0, resolution: "480p" },
+            final: { duration: 5, fps: 16, steps: 30, guidance: 3.5, resolution: "720p" },
+            hq: { duration: 7, fps: 24, steps: 50, guidance: 4.0, resolution: "720p" },
         };
 
         function applyVideoPreset(name) {
@@ -13,6 +13,7 @@
             document.getElementById('fps').value = preset.fps;
             document.getElementById('vsteps').value = preset.steps;
             document.getElementById('vguidance').value = preset.guidance;
+            document.getElementById('resolution').value = preset.resolution;
         }
 
         // Load form from query parameters (for "Generate Video" from Browse)
@@ -33,6 +34,68 @@
 
         // Load on page load
         loadFromQueryParams();
+
+        // Worker capabilities management
+        async function updateWorkerCapabilities() {
+            const workerSelect = document.getElementById('worker');
+            const modelSelect = document.getElementById('modelSize');
+            const modelInfo = document.getElementById('modelInfo');
+            const selectedWorker = workerSelect.value;
+
+            // Reset to loading state
+            modelInfo.textContent = 'Loading worker capabilities...';
+            modelInfo.style.color = '#8b949e';
+
+            try {
+                const response = await fetch(`/api/workers/${selectedWorker}/capabilities`);
+                if (!response.ok) {
+                    throw new Error(`Worker unreachable (${response.status})`);
+                }
+
+                const caps = await response.json();
+                const availableModels = caps.video_models || [];
+
+                // Update model dropdown based on capabilities
+                const modelOptions = modelSelect.querySelectorAll('option');
+                modelOptions.forEach(option => {
+                    const value = option.value;
+                    if (value === '') {
+                        // "Worker Default" is always enabled
+                        option.disabled = false;
+                    } else if (availableModels.includes(value)) {
+                        option.disabled = false;
+                    } else {
+                        option.disabled = true;
+                        option.textContent = option.textContent.replace(' (unavailable)', '') + ' (unavailable)';
+                    }
+                });
+
+                // Update info text
+                if (availableModels.length === 0) {
+                    modelInfo.textContent = 'No video models available on this worker';
+                    modelInfo.style.color = '#f85149';
+                } else {
+                    const platform = caps.platform || 'unknown';
+                    modelInfo.textContent = `Available models: ${availableModels.join(', ')} (${platform})`;
+                    modelInfo.style.color = '#3fb950';
+                }
+
+                // If currently selected model is unavailable, reset to default
+                if (modelSelect.value && !availableModels.includes(modelSelect.value)) {
+                    modelSelect.value = '';
+                }
+            } catch (error) {
+                console.error('Failed to fetch worker capabilities:', error);
+                modelInfo.textContent = `Failed to query worker: ${error.message}`;
+                modelInfo.style.color = '#f85149';
+            }
+        }
+
+        // Update capabilities on worker change
+        document.getElementById('worker').addEventListener('change', updateWorkerCapabilities);
+
+        // Load capabilities on page load
+        updateWorkerCapabilities();
 
         // Load and preview image from run ID
         async function loadSourcePreview() {
@@ -110,6 +173,16 @@
                 // Append file with filename (important for FastAPI UploadFile)
                 formData.append('image', imageFile, imageFile.name);
             }
+
+            // Collect tags from checkboxes and custom text input
+            const tags = [];
+            document.querySelectorAll('input[type="checkbox"][name^="tag_"]').forEach(cb => {
+                if (cb.checked) tags.push(cb.value);
+            });
+            const customTags = document.getElementById('customTags').value
+                .split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+            tags.push(...customTags);
+            formData.append('tags', JSON.stringify(tags));
 
             // Show submitting status
             statusDiv.className = 'progress';
@@ -189,8 +262,25 @@
                         return;
                     }
 
-                    // Update progress
-                    statusSpan.textContent = `${job.status} - ${percent}% (step ${step}/${total})`;
+                    // Update progress with ETA if available
+                    let progressText = `${job.status} - ${percent}% (step ${step}/${total})`;
+
+                    if (job.progress.eta_seconds !== null && job.progress.eta_seconds !== undefined) {
+                        const etaMins = Math.floor(job.progress.eta_seconds / 60);
+                        const etaSecs = Math.round(job.progress.eta_seconds % 60);
+                        if (etaMins > 0) {
+                            progressText += ` - ETA: ${etaMins}m ${etaSecs}s`;
+                        } else {
+                            progressText += ` - ETA: ${etaSecs}s`;
+                        }
+
+                        // Show seconds per iteration for context
+                        if (job.progress.seconds_per_iteration) {
+                            progressText += ` (${job.progress.seconds_per_iteration.toFixed(1)}s/it)`;
+                        }
+                    }
+
+                    statusSpan.textContent = progressText;
 
                     // Continue polling
                     setTimeout(poll, 2000);

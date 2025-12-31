@@ -13,7 +13,16 @@ from fastapi.responses import Response, StreamingResponse
 from PIL import Image
 
 from mydiffuser import __version__
-from mydiffuser.config import DEVICE, PROJECT_ROOT, VIDEO_ENABLED, configure_torch_backends
+from mydiffuser.config import (
+    DEVICE,
+    PLATFORM,
+    PROJECT_ROOT,
+    VIDEO_ENABLED,
+    VIDEO_MODELS,
+    VIDEO_MODEL_SIZE,
+    configure_torch_backends,
+    get_available_video_models,
+)
 from mydiffuser.models.requests import GenerateImageRequest, GenerateVideoRequest
 from mydiffuser.utils.paths import worker_run_dir
 from mydiffuser.worker import jobs, state
@@ -55,7 +64,7 @@ def create_worker_app() -> FastAPI:
         logger.info("Worker shutting down...")
 
         # Unload any loaded models
-        from mydiffuser.server.state import _unload_all_models
+        from mydiffuser.inference.state import _unload_all_models
         _unload_all_models()
 
         logger.info("Worker shutdown complete")
@@ -91,14 +100,40 @@ def create_worker_app() -> FastAPI:
         health_info["capabilities"].append("image")
         if VIDEO_ENABLED:
             health_info["capabilities"].append("video")
+            # Include available video models
+            health_info["video_models"] = get_available_video_models()
+
+        # Platform info
+        health_info["platform"] = PLATFORM
 
         # Report currently loaded model (if any)
-        from mydiffuser.server.state import get_active_model
+        from mydiffuser.inference.state import get_active_model
         active = get_active_model()
         if active:
             health_info["active_model"] = active
 
         return health_info
+
+    @app.get("/capabilities")
+    async def capabilities():
+        """Get worker capabilities (models, platform, features).
+
+        This is a lightweight endpoint specifically for capability discovery.
+        Clients should call this when selecting a worker to determine:
+        - Available video models (5B, 14B)
+        - Platform (rocm, cuda, cpu)
+        - Supported job types
+        """
+        caps = {
+            "platform": PLATFORM,
+            "job_types": ["image"],
+        }
+
+        if VIDEO_ENABLED:
+            caps["job_types"].append("video")
+            caps["video_models"] = get_available_video_models()
+
+        return caps
 
     @app.get("/gpu/test")
     async def gpu_test():
@@ -216,6 +251,16 @@ def create_worker_app() -> FastAPI:
 
             request = GenerateVideoRequest(**request_data)
 
+            # Validate model_size if specified
+            if request.model_size:
+                available_models = get_available_video_models()
+                if request.model_size not in available_models:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Model {request.model_size} not available on this worker. "
+                        f"Available models: {', '.join(available_models)}",
+                    )
+
             # Read uploaded image
             image_data = await image.read()
             source_image = Image.open(io.BytesIO(image_data))
@@ -243,7 +288,7 @@ def create_worker_app() -> FastAPI:
         async with infer_lock:
             try:
                 # Lazy load image generator (will swap models if needed)
-                from mydiffuser.server.state import ensure_image_generator
+                from mydiffuser.inference.state import ensure_image_generator
                 gen = ensure_image_generator()
 
                 await asyncio.get_event_loop().run_in_executor(
@@ -259,9 +304,15 @@ def create_worker_app() -> FastAPI:
         """Run video generation job in background."""
         async with infer_lock:
             try:
+                # Determine which model to use
+                model_size = request.model_size or VIDEO_MODEL_SIZE
+                model_id = VIDEO_MODELS.get(model_size, VIDEO_MODELS["5B"])
+
+                logger.info(f"[{job_id}] Using video model: {model_size} ({model_id})")
+
                 # Lazy load video generator (will swap models if needed)
-                from mydiffuser.server.state import ensure_video_generator
-                gen = ensure_video_generator()
+                from mydiffuser.inference.state import ensure_video_generator
+                gen = ensure_video_generator(model_id=model_id)
 
                 await asyncio.get_event_loop().run_in_executor(
                     None,

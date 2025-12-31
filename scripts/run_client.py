@@ -20,7 +20,12 @@ Examples:
 
 import argparse
 import logging
+import os
 import sys
+
+# CRITICAL: Skip GPU detection in client to prevent hangs on broken GPU drivers
+# This must be set BEFORE importing mydiffuser modules
+os.environ["MYDIFFUSER_SKIP_GPU_DETECT"] = "1"
 
 # Configure logging before any imports
 logging.basicConfig(

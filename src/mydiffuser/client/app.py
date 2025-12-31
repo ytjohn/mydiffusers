@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     # Ensure output directories exist
     ensure_output_dirs()
 
+    # Initialize SQLite database
+    from mydiffuser.client import database
+    database.init_database()
+    logger.info("SQLite database initialized")
+
     logger.info("Client UI startup complete (no models loaded)")
 
     yield
@@ -94,13 +99,13 @@ def create_app() -> FastAPI:
             "version": __version__,
         }
 
-    # Root endpoint
+    # Root endpoint - redirect to generate image
     @app.get("/", response_class=HTMLResponse)
     async def root(request: Request):
-        """Root endpoint - home page."""
+        """Root endpoint - generate image page."""
         return templates.TemplateResponse(
-            "home.html",
-            {"request": request, "version": __version__}
+            "generate_image.html",
+            {"request": request}
         )
 
     return app

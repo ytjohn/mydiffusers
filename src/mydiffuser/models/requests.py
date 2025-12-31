@@ -35,6 +35,8 @@ class GenerateImageRequest(BaseModel):
 
     seed: int = Field(42, ge=0, le=2**31 - 1)
 
+    tags: list[str] = Field(default_factory=list, description="Tags for organizing runs")
+
 
 class GenerateVideoRequest(BaseModel):
     """Request model for image-to-video generation."""
@@ -61,6 +63,12 @@ class GenerateVideoRequest(BaseModel):
         description="Model size: 14B (~28GB, best) or 5B (~10GB, 720p)",
     )
 
+    # Video output resolution - determines final video dimensions
+    resolution: Literal["480p", "720p"] | None = Field(
+        None,
+        description="Output resolution: 480p (832×480) or 720p (1280×704). Auto-detects aspect ratio.",
+    )
+
     duration_seconds: float | None = Field(None, ge=1.0, le=30.0)
     fps: int | None = Field(None, ge=8, le=30)
 
@@ -68,4 +76,6 @@ class GenerateVideoRequest(BaseModel):
     guidance_scale: float | None = Field(None, ge=0.0, le=20.0)
 
     seed: int = Field(42, ge=0, le=2**31 - 1)
+
+    tags: list[str] = Field(default_factory=list, description="Tags for organizing runs")
 

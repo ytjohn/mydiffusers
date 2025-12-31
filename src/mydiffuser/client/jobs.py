@@ -196,6 +196,18 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
             job.local_run_id = job.worker_run_id
             job.fetched_at = datetime.now(UTC)
 
+            # Index run in SQLite database
+            from mydiffuser.client import database
+            from mydiffuser.utils.paths import read_json
+            meta_file = local_dir / "meta.json"
+            if meta_file.exists():
+                try:
+                    meta = read_json(meta_file)
+                    database.index_run(job.worker_run_id, meta)
+                    logger.info(f"Indexed run {job.worker_run_id} in database")
+                except Exception as e:
+                    logger.warning(f"Failed to index run {job.worker_run_id}: {e}")
+
             logger.info(f"Job {job_id} results fetched to {local_dir}")
             return local_dir
 
@@ -214,6 +226,7 @@ async def submit_image_job(
     seed: int,
     num_inference_steps: int,
     guidance_scale: float,
+    tags: list[str] | None = None,
 ) -> str:
     """Submit an image generation job to a worker.
 
@@ -236,6 +249,9 @@ async def submit_image_job(
 
     logger.info(f"Submitting image job to {worker_name}: '{prompt[:50]}...'")
 
+    if tags is None:
+        tags = []
+
     try:
         with WorkerClient(endpoint, timeout=10.0) as client:
             job_id = client.submit_image_job(
@@ -245,6 +261,7 @@ async def submit_image_job(
                 seed=seed,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
+                tags=tags,
             )
 
         # Track locally (preset removed, just for tracking purposes we'll use "custom")
@@ -279,6 +296,9 @@ async def submit_video_job(
     fps: int,
     num_inference_steps: int,
     guidance_scale: float,
+    resolution: str = "480p",
+    model_size: str | None = None,
+    tags: list[str] | None = None,
 ) -> str:
     """Submit a video generation job to a worker.
 
@@ -292,6 +312,9 @@ async def submit_video_job(
         fps: Frames per second
         num_inference_steps: Inference steps
         guidance_scale: Guidance scale
+        resolution: Output resolution (480p or 720p)
+        model_size: Model size (5B or 14B), None for worker default
+        tags: Optional list of tags
 
     Returns:
         Job ID (UUID)
@@ -302,6 +325,9 @@ async def submit_video_job(
     endpoint = get_worker_endpoint(worker_name)
 
     logger.info(f"Submitting video job to {worker_name}: '{prompt[:50]}...'")
+
+    if tags is None:
+        tags = []
 
     try:
         with WorkerClient(endpoint, timeout=10.0) as client:
@@ -314,6 +340,9 @@ async def submit_video_job(
                 fps=fps,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
+                resolution=resolution,
+                model_size=model_size,
+                tags=tags,
             )
 
         # Track locally (preset removed, just for tracking purposes we'll use "custom")

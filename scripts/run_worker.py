@@ -16,6 +16,7 @@ Examples:
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -26,6 +27,17 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 import uvicorn
 
 from mydiffuser.worker.app import create_worker_app
+
+
+class SuppressStatusChecks(logging.Filter):
+    """Filter out frequent job status check logs from uvicorn access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Suppress GET requests to /jobs/{id}/status
+        message = record.getMessage()
+        if "GET /jobs/" in message and "/status" in message:
+            return False
+        return True
 
 
 def main():
@@ -55,6 +67,9 @@ def main():
     print()
 
     app = create_worker_app()
+
+    # Suppress frequent job status check logs
+    logging.getLogger("uvicorn.access").addFilter(SuppressStatusChecks())
 
     uvicorn.run(
         app,

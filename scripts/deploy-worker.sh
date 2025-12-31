@@ -32,6 +32,7 @@ echo ""
 # 1. Sync code to remote
 echo "📦 Step 1/4: Syncing code to ${TARGET_HOST}..."
 rsync -avh \
+  -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
   --exclude=outputs/ \
   --exclude=output/ \
   --exclude=uv.lock \
@@ -49,7 +50,7 @@ echo ""
 
 # 2. Setup environment and dependencies with CUDA support
 echo "🔧 Step 2/4: Setting up Python environment with CUDA..."
-ssh "${TARGET_HOST}" bash <<'REMOTE_SETUP'
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${TARGET_HOST}" bash <<'REMOTE_SETUP'
 set -e
 cd code
 export PATH="$HOME/.local/bin:$PATH"
@@ -70,7 +71,7 @@ echo ""
 
 # 3. Start worker
 echo "🚀 Step 3/4: Starting worker on port ${REMOTE_PORT}..."
-ssh "${TARGET_HOST}" bash -s "${REMOTE_PORT}" <<'REMOTE_START'
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${TARGET_HOST}" bash -s "${REMOTE_PORT}" <<'REMOTE_START'
 set -e
 REMOTE_PORT=$1
 cd ~/code
@@ -126,7 +127,7 @@ echo "🔗 Step 4/4: SSH Tunnel Setup"
 echo ""
 echo "To use this worker from your local client, set up an SSH tunnel:"
 echo ""
-echo "  ssh -N -L ${LOCAL_TUNNEL_PORT}:localhost:${REMOTE_PORT} ${TARGET_HOST}"
+echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -N -L ${LOCAL_TUNNEL_PORT}:localhost:${REMOTE_PORT} ${TARGET_HOST}"
 echo ""
 echo "This creates a tunnel:"
 echo "  localhost:${LOCAL_TUNNEL_PORT} → ${TARGET_HOST}:${REMOTE_PORT}"
@@ -149,8 +150,8 @@ echo "  3. Start your client: bash scripts/restart-client.sh"
 echo "  4. Submit a job via the UI and select 'remote' worker"
 echo ""
 echo "To check worker logs:"
-echo "  ssh -t ${TARGET_HOST} 'screen -r worker'  # Live view (Ctrl+A D to detach)"
-echo "  ssh ${TARGET_HOST} 'tail -f /tmp/worker.log'  # Log file"
+echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t ${TARGET_HOST} 'screen -r worker'  # Live view (Ctrl+A D to detach)"
+echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${TARGET_HOST} 'tail -f /tmp/worker.log'  # Log file"
 echo ""
 echo "To stop the remote worker:"
-echo "  ssh ${TARGET_HOST} 'screen -S worker -X quit'"
+echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${TARGET_HOST} 'screen -S worker -X quit'"

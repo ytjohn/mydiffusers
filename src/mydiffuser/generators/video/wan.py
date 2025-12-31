@@ -28,6 +28,7 @@ from mydiffuser.shutdown import check_shutdown, is_shutdown_requested
 
 logger = logging.getLogger(__name__)
 
+CPU_VAE_DTYPE = torch.float32
 
 def _shutdown_callback(
     pipe: Any, step: int, timestep: Any, callback_kwargs: dict
@@ -78,6 +79,33 @@ def _decoded_to_pil_frames(decoded: torch.Tensor) -> list[Image.Image]:
         frames.append(Image.fromarray(arr, mode="RGB"))
 
     return frames
+
+
+def _calculate_output_size(
+    input_image: Image.Image, resolution: str = "480p"
+) -> tuple[int, int]:
+    """Calculate output video size based on input aspect ratio and resolution.
+
+    Args:
+        input_image: Input PIL image
+        resolution: "480p" or "720p"
+
+    Returns:
+        (width, height) tuple for video output
+
+    Notes:
+        - Detects landscape vs portrait from input image
+        - WAN2.2 native resolution is 720p (1280×704 landscape, 704×1280 portrait)
+        - 480p is 832×480 landscape, 480×832 portrait
+        - Square images default to landscape (wider dimensions)
+    """
+    width, height = input_image.size
+    is_landscape = width >= height  # >= handles square images as landscape
+
+    if resolution == "720p":
+        return (1280, 704) if is_landscape else (704, 1280)
+    else:  # 480p (default for backward compatibility)
+        return (832, 480) if is_landscape else (480, 832)
 
 
 class WanVideoGenerator(BaseVideoGenerator):
@@ -172,6 +200,7 @@ class WanVideoGenerator(BaseVideoGenerator):
         output_path: Path,
         run_id: str = "",
         callback_on_step_end = None,
+        resolution: str = "480p",
     ) -> tuple[Path, float, int]:
         self.ensure_loaded()
         check_shutdown()
@@ -198,6 +227,17 @@ class WanVideoGenerator(BaseVideoGenerator):
 
         generator = torch.Generator(device=DEVICE).manual_seed(seed)
 
+        # Calculate output size based on input aspect ratio and resolution
+        output_size = _calculate_output_size(input_image, resolution)
+        logger.info(
+            "%sOutput resolution: %s, detected %s orientation, size=%dx%d",
+            log_prefix,
+            resolution,
+            "landscape" if output_size[0] > output_size[1] else "portrait",
+            output_size[0],
+            output_size[1],
+        )
+
         start_time = time.perf_counter()
 
         try:
@@ -222,6 +262,8 @@ class WanVideoGenerator(BaseVideoGenerator):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
                 generator=generator,
+                width=output_size[0],
+                height=output_size[1],
                 callback_on_step_end=final_callback,
                 output_type="latent",
                 return_dict=True,
@@ -266,6 +308,19 @@ class WanVideoGenerator(BaseVideoGenerator):
                 latents.dtype,
                 latents.device,
             )
+
+            # Trigger post-processing callback (VAE decode starting)
+            if callback_on_step_end is not None:
+                try:
+                    logger.info("%sTriggering post-processing callback", log_prefix)
+                    callback_on_step_end(
+                        self._pipe,
+                        num_inference_steps,  # Signal completion of denoising
+                        0,  # No timestep for post-processing
+                        {"phase": "vae_decode"}
+                    )
+                except Exception as e:
+                    logger.warning("%sPost-processing callback failed: %s", log_prefix, e)
 
             # --- VAE decode ---
             # Device and dtype come from config.py (auto-detected based on ROCm vs CUDA)
