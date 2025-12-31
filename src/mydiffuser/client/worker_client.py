@@ -275,3 +275,55 @@ class WorkerClient:
         response = self._client.delete(f"{self.endpoint}/jobs/{job_id}")
         response.raise_for_status()
         logger.info(f"Deleted job {job_id} from worker")
+
+    def analyze_image_prompt(
+        self,
+        image: Image.Image,
+        current_prompt: str,
+        user_message: str | None = None,
+        max_new_tokens: int = 512,
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
+        """Analyze an image and get prompt improvement suggestions.
+
+        Args:
+            image: PIL Image to analyze
+            current_prompt: The prompt that generated this image
+            user_message: Optional user feedback/issue description
+            max_new_tokens: Maximum tokens to generate (default 512)
+            timeout: Request timeout in seconds (default 60s)
+
+        Returns:
+            Dict with keys:
+                - analysis: str - Analysis text
+                - suggestions: list[dict] - Prompt suggestions with rationales
+                - raw_response: str - Full model response
+
+        Raises:
+            httpx.HTTPError: If analysis fails
+            httpx.TimeoutException: If worker doesn't respond within timeout
+        """
+        # Convert image to bytes
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        # Submit to worker
+        files = {"image": ("image.png", img_bytes, "image/png")}
+        data = {
+            "current_prompt": current_prompt,
+            "max_new_tokens": max_new_tokens,
+        }
+        if user_message:
+            data["user_message"] = user_message
+
+        response = self._client.post(
+            f"{self.endpoint}/assist/analyze",
+            files=files,
+            data=data,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"Received prompt analysis from {self.endpoint}")
+        return result

@@ -102,6 +102,7 @@ def create_worker_app() -> FastAPI:
             health_info["capabilities"].append("video")
             # Include available video models
             health_info["video_models"] = get_available_video_models()
+        health_info["capabilities"].append("assist")  # Prompt assistant
 
         # Platform info
         health_info["platform"] = PLATFORM
@@ -111,6 +112,14 @@ def create_worker_app() -> FastAPI:
         active = get_active_model()
         if active:
             health_info["active_model"] = active
+
+        # Report model loading status
+        from mydiffuser.inference import state as inference_state
+        health_info["models_loaded"] = {
+            "image": inference_state.image_generator is not None and inference_state.image_generator.is_loaded if inference_state.image_generator else False,
+            "video": inference_state.video_generator is not None and inference_state.video_generator.is_loaded if inference_state.video_generator else False,
+            "assistant": inference_state.prompt_assistant is not None if inference_state.prompt_assistant else False,
+        }
 
         return health_info
 
@@ -134,6 +143,60 @@ def create_worker_app() -> FastAPI:
             caps["video_models"] = get_available_video_models()
 
         return caps
+
+    @app.post("/assist/analyze")
+    async def analyze_image_for_prompt_improvement(
+        image: UploadFile = File(...),
+        current_prompt: str = Form(...),
+        user_message: str | None = Form(None),
+        max_new_tokens: int = Form(512),
+    ):
+        """Analyze an image and provide prompt improvement suggestions.
+
+        Args:
+            image: Uploaded image file to analyze
+            current_prompt: The prompt that generated this image
+            user_message: Optional user feedback/issue description
+            max_new_tokens: Maximum tokens to generate (default 512)
+
+        Returns:
+            Dict with analysis, suggestions, and raw_response
+        """
+        import base64
+
+        async with infer_lock:
+            try:
+                # Load the image
+                image_data = await image.read()
+                img = Image.open(io.BytesIO(image_data))
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                # Lazy load assistant (will swap models if needed)
+                from mydiffuser.inference.state import ensure_prompt_assistant
+                assistant = ensure_prompt_assistant()
+
+                # Run analysis in executor to avoid blocking
+                def analyze():
+                    return assistant.analyze_image(
+                        image=img,
+                        current_prompt=current_prompt,
+                        issue=user_message,
+                        max_new_tokens=max_new_tokens
+                    )
+
+                result = await asyncio.get_event_loop().run_in_executor(None, analyze)
+
+                # Return the analysis
+                return {
+                    "analysis": result['analysis'],
+                    "suggestions": result['suggestions'],
+                    "raw_response": result['raw_response'],
+                }
+
+            except Exception as e:
+                logger.exception(f"Assist analysis failed: {e}")
+                raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
     @app.get("/gpu/test")
     async def gpu_test():

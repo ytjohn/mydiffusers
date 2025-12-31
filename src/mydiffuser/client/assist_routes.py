@@ -10,7 +10,8 @@ from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from PIL import Image
 
 from mydiffuser.client import database
-from mydiffuser.inference import state
+from mydiffuser.client.worker_client import WorkerClient
+from mydiffuser.client.config import list_workers
 
 logger = logging.getLogger(__name__)
 
@@ -110,27 +111,32 @@ async def analyze_image(
         logger.error(f"Failed to load image: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to load image: {e}")
 
-    # Ensure assistant is loaded
-    try:
-        assistant = state.ensure_prompt_assistant()
-    except Exception as e:
-        logger.error(f"Failed to load assistant: {e}")
+    # Get first available worker
+    workers = list_workers()
+    if not workers:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load prompt assistant: {e}"
+            status_code=503,
+            detail="No workers available for analysis"
         )
 
-    # Analyze the image
+    worker_config = workers[0]  # Use first worker (typically local)
+    worker_endpoint = worker_config["endpoint"]
+
+    # Call worker to analyze the image
     try:
-        result = assistant.analyze_image(
-            image=image,
-            current_prompt=current_prompt,
-            issue=user_message,
-            max_new_tokens=512
-        )
+        with WorkerClient(worker_endpoint, timeout=60.0) as client:
+            result = client.analyze_image_prompt(
+                image=image,
+                current_prompt=current_prompt,
+                user_message=user_message,
+                max_new_tokens=512,
+            )
     except Exception as e:
-        logger.error(f"Analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+        logger.error(f"Worker analysis failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Worker analysis failed: {e}"
+        )
 
     # Store turn in database
     try:
