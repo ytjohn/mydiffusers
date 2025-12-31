@@ -104,6 +104,10 @@ def create_app() -> FastAPI:
     from mydiffuser.client import assist_routes
     app.include_router(assist_routes.router)
 
+    # Include assistant UI routes
+    from mydiffuser.client import assist_ui
+    app.include_router(assist_ui.router)
+
     # Mount static files
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

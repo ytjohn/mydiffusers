@@ -152,6 +152,35 @@ function renderWorkerCards(workers) {
 
             html += `</div>`;
 
+            // Models Loaded (memory status)
+            if (h.models_loaded) {
+                html += `
+                    <div class="worker-section">
+                        <div class="section-title">Models in Memory</div>
+                        <div class="capabilities-list">
+                `;
+
+                if (h.models_loaded.image) {
+                    html += `<span class="capability-tag">Image</span>`;
+                }
+                if (h.models_loaded.video) {
+                    html += `<span class="capability-tag video">Video</span>`;
+                }
+                if (h.models_loaded.assistant) {
+                    html += `<span class="capability-tag assist">Assistant</span>`;
+                }
+
+                const loadedCount = Object.values(h.models_loaded).filter(Boolean).length;
+                if (loadedCount === 0) {
+                    html += `<span style="color: #8b949e; font-size: 13px;">No models loaded</span>`;
+                }
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
             // Capabilities
             html += `
                 <div class="worker-section">
@@ -161,7 +190,7 @@ function renderWorkerCards(workers) {
 
             if (h.capabilities && h.capabilities.length > 0) {
                 for (const cap of h.capabilities) {
-                    const capClass = cap === 'video' ? 'video' : '';
+                    const capClass = cap === 'video' ? 'video' : (cap === 'assist' ? 'assist' : '');
                     html += `<span class="capability-tag ${capClass}">${escapeHtml(cap)}</span>`;
                 }
             }
