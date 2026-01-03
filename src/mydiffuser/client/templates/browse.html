@@ -542,6 +542,20 @@
       <button class="filter-tab" data-type="video">Videos</button>
     </div>
 
+    <div id="bulkControls" style="margin: 12px 0; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: none;">
+      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <span style="color: var(--text-muted); font-size: 0.9rem;">
+          <span id="bulkCount">0</span> selected
+        </span>
+        <button id="bulkSelectAll" class="btn" style="padding: 6px 12px; font-size: 0.8rem;">Select All</button>
+        <button id="bulkDeselectAll" class="btn" style="padding: 6px 12px; font-size: 0.8rem;">Deselect All</button>
+        <input type="text" id="bulkTagInput" placeholder="Add tags..." style="flex: 1; min-width: 200px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
+        <button id="bulkAddTags" class="btn btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">Add Tags</button>
+        <button id="bulkRemoveTags" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;">Remove Tags</button>
+        <button id="bulkDelete" class="btn btn-danger" style="padding: 6px 12px; font-size: 0.8rem;">Delete</button>
+      </div>
+    </div>
+
     <div id="tagFilters" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
       <span style="color: var(--text-muted); font-size: 0.8rem;">Filter by tags:</span>
       <!-- Dynamically populated by JavaScript -->

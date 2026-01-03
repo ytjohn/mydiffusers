@@ -1,37 +1,142 @@
-// Aspect ratio dimensions
-        const ASPECT_RATIOS = {
-            landscape: { width: 832, height: 480 },   // 16:9 480p
-            portrait: { width: 480, height: 832 },    // 9:16 480p
-            square: { width: 768, height: 768 },      // 1:1 square
+// Resolution scales for aspect ratio toggle
+        const RESOLUTION_SCALES = {
+            '480p': { landscape: { width: 832, height: 480 }, portrait: { width: 480, height: 832 }, square: { width: 768, height: 768 } },
+            '720p': { landscape: { width: 1280, height: 704 }, portrait: { width: 704, height: 1280 }, square: { width: 1024, height: 1024 } },
+            '1080p': { landscape: { width: 1920, height: 1088 }, portrait: { width: 1088, height: 1920 }, square: { width: 1536, height: 1536 } },
         };
 
-        // Image presets (populate form fields)
+        // Image presets (reference resolution scales instead of fixed dimensions)
         const IMAGE_PRESETS = {
-            draft: { height: 480, width: 832, steps: 4, guidance: 0.3 },
-            fast: { height: 480, width: 832, steps: 6, guidance: 0.3 },
-            balanced: { height: 704, width: 1280, steps: 8, guidance: 0.3 },
-            quality: { height: 704, width: 1280, steps: 12, guidance: 0.3 },
-            hq: { height: 1088, width: 1920, steps: 12, guidance: 0.3 },
+            draft: { scale: '480p', steps: 4, guidance: 0.3 },
+            fast: { scale: '480p', steps: 6, guidance: 0.3 },
+            balanced: { scale: '720p', steps: 8, guidance: 0.3 },
+            quality: { scale: '720p', steps: 12, guidance: 0.3 },
+            hq: { scale: '1080p', steps: 12, guidance: 0.3 },
         };
 
         function applyImagePreset(name) {
             const preset = IMAGE_PRESETS[name];
             if (!preset) return;
 
-            document.getElementById('height').value = preset.height;
-            document.getElementById('width').value = preset.width;
+            // Get current aspect ratio selection
+            const aspectRatio = document.getElementById('aspect_ratio').value;
+            
+            // Look up dimensions based on preset scale and current aspect ratio
+            if (RESOLUTION_SCALES[preset.scale] && RESOLUTION_SCALES[preset.scale][aspectRatio]) {
+                const dims = RESOLUTION_SCALES[preset.scale][aspectRatio];
+                document.getElementById('height').value = dims.height;
+                document.getElementById('width').value = dims.width;
+            }
+            
+            // Apply other preset parameters
             document.getElementById('steps').value = preset.steps;
             document.getElementById('guidance').value = preset.guidance;
+            
+            // Trigger estimation update after applying preset
+            updateEstimates();
         }
 
-        // Update height/width when aspect ratio changes
+        // Detect current resolution scale based on dimensions
+        function detectResolutionScale(width, height) {
+            // Check against known resolutions
+            if ((width === 832 && height === 480) || (width === 480 && height === 832) || (width === 768 && height === 768)) {
+                return '480p';
+            } else if ((width === 1280 && height === 704) || (width === 704 && height === 1280) || (width === 1024 && height === 1024)) {
+                return '720p';
+            } else if ((width === 1920 && height === 1088) || (width === 1088 && height === 1920) || (width === 1536 && height === 1536)) {
+                return '1080p';
+            }
+            // Default to closest match or preserve custom
+            return null;
+        }
+
+        // Update height/width when aspect ratio changes (preserve resolution scale)
         document.getElementById('aspect_ratio').addEventListener('change', (e) => {
-            const ratio = ASPECT_RATIOS[e.target.value];
-            if (ratio) {
-                document.getElementById('height').value = ratio.height;
-                document.getElementById('width').value = ratio.width;
+            const currentWidth = parseInt(document.getElementById('width').value);
+            const currentHeight = parseInt(document.getElementById('height').value);
+            const newAspect = e.target.value;
+
+            // Try to detect current resolution scale
+            const scale = detectResolutionScale(currentWidth, currentHeight);
+
+            if (scale && RESOLUTION_SCALES[scale] && RESOLUTION_SCALES[scale][newAspect]) {
+                // Use the matching resolution scale
+                const dims = RESOLUTION_SCALES[scale][newAspect];
+                document.getElementById('height').value = dims.height;
+                document.getElementById('width').value = dims.width;
+            } else {
+                // Custom dimensions - intelligently swap for portrait/landscape
+                if (newAspect === 'portrait' && currentWidth >= currentHeight) {
+                    // Swap to portrait
+                    document.getElementById('height').value = currentWidth;
+                    document.getElementById('width').value = currentHeight;
+                } else if (newAspect === 'landscape' && currentHeight > currentWidth) {
+                    // Swap to landscape
+                    document.getElementById('height').value = currentWidth;
+                    document.getElementById('width').value = currentHeight;
+                } else if (newAspect === 'square') {
+                    // Use average or smaller dimension for square
+                    const dim = Math.min(currentWidth, currentHeight);
+                    document.getElementById('height').value = dim;
+                    document.getElementById('width').value = dim;
+                }
+                // Otherwise keep as-is (already in correct orientation)
             }
         });
+
+        // Real-time VRAM and time estimation
+        async function updateEstimates() {
+            const width = parseInt(document.getElementById('width').value) || 512;
+            const height = parseInt(document.getElementById('height').value) || 512;
+            const steps = parseInt(document.getElementById('steps').value) || 20;
+            const guidance = parseFloat(document.getElementById('guidance').value) || 0.0;
+            
+            try {
+                const response = await fetch('/api/estimate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: 'image',
+                        model_id: 'Tongyi-MAI/Z-Image-Turbo',
+                        parameters: {
+                            width: width,
+                            height: height,
+                            num_inference_steps: steps,
+                            guidance_scale: guidance
+                        },
+                        worker_id: 'local'
+                    })
+                });
+
+                const result = await response.json();
+                const estimatesDiv = document.getElementById('estimates');
+                const vramDiv = document.getElementById('estimate-vram');
+                const timeDiv = document.getElementById('estimate-time');
+                const warningDiv = document.getElementById('estimate-warning');
+                
+                const timeDisplay = result.time_estimate_seconds >= 60 
+                    ? `${Math.floor(result.time_estimate_seconds / 60)}m ${result.time_estimate_seconds % 60}s`
+                    : `${result.time_estimate_seconds}s`;
+                
+                vramDiv.innerHTML = `<strong>VRAM:</strong> ${result.vram_total_needed.toFixed(1)} GB`;
+                timeDiv.innerHTML = `<strong>Time:</strong> ${timeDisplay}`;
+                
+                if (!result.worker_available) {
+                    warningDiv.innerHTML = '⚠ <strong>Warning:</strong> Worker may not have enough VRAM';
+                    warningDiv.style.display = 'block';
+                    warningDiv.style.color = '#ff7b72';
+                } else {
+                    warningDiv.style.display = 'none';
+                }
+                
+                estimatesDiv.style.display = 'block';
+                
+            } catch (error) {
+                console.error('Error getting estimates:', error);
+            }
+        }
 
         // Load form from query parameters (for "Use as Template" flow)
         function loadFromQueryParams() {
@@ -81,6 +186,15 @@
 
         // Load on page load
         loadFromQueryParams();
+        
+        // Add event listeners for real-time estimates
+        ['width', 'height', 'steps', 'guidance'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateEstimates);
+        });
+        
+        // Initial estimate
+        console.log('Setting up real-time estimates...');
+        updateEstimates();
 
         async function submitImageJob(event) {
             event.preventDefault();

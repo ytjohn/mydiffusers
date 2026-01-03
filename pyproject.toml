@@ -42,14 +42,19 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 src = ["src"]
+line-length = 100  # Modern standard (was 88 - Black's 2018 default)
 
 [tool.ruff.lint]
 select = ["E","W","F","I","B","UP","RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/mydiffuser/server/ui.py" = ["E501"]
-"src/mydiffuser/server/browse_ui.py" = ["E501", "RUF001"]
-"src/mydiffuser/server/video_ui.py" = ["E501"]
+# UI files contain long HTML/CSS/JS strings
+"src/mydiffuser/client/ui.py" = ["E501"]
+"src/mydiffuser/client/assist_ui.py" = ["E501"]
+"src/mydiffuser/client/browse_ui.py" = ["E501", "RUF001"]
+"src/mydiffuser/client/health_ui.py" = ["E501"]
+# Database files contain long SQL queries
+"src/mydiffuser/client/database.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

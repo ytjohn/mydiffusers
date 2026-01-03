@@ -4,14 +4,13 @@ Handles running image and video generation tasks with progress tracking.
 """
 
 import logging
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PIL import Image
 
-from mydiffuser.config import DEVICE, DTYPE, PROJECT_ROOT
+from mydiffuser.config import DEVICE, DTYPE, GPU_ARCH, GPU_NAME
 from mydiffuser.models.requests import GenerateImageRequest, GenerateVideoRequest
 from mydiffuser.utils.paths import (
     generate_thumbnail,
@@ -50,7 +49,7 @@ def _create_step_callback(job_id: str, total_steps: int):
         # Check if this is a post-processing phase (VAE decode)
         if isinstance(callback_kwargs, dict) and callback_kwargs.get("phase") == "vae_decode":
             state.update_step(
-                job_id, total_steps, f"Post-processing (VAE decode)..."
+                job_id, total_steps, "Post-processing (VAE decode)..."
             )
         else:
             # Normal inference step
@@ -105,7 +104,7 @@ def execute_image_job(
         callback = _create_step_callback(job_id, params["num_inference_steps"])
 
         # Run generation
-        img, dt = generator.generate(
+        img, dt, vram_data, timing_breakdown = generator.generate(
             prompt=request.prompt,
             height=params["height"],
             width=params["width"],
@@ -147,7 +146,12 @@ def execute_image_job(
             },
             "device": DEVICE,
             "dtype": str(DTYPE),
+            "gpu_name": GPU_NAME,
+            "gpu_arch": GPU_ARCH,
             "seconds_elapsed": dt,
+            "vram_used": vram_data.get("allocated", 0.0),
+            "vram_reserved": vram_data.get("reserved", 0.0),
+            "timing": timing_breakdown,
         }
         write_json(rd / "meta.json", meta)
 
@@ -158,7 +162,7 @@ def execute_image_job(
 
         return rid, rd
 
-    except InterruptedError as e:
+    except InterruptedError:
         # Job was cancelled by user
         logger.info(f"[{job_id}] Image generation cancelled")
         # State is already marked as cancelled by the callback
@@ -221,7 +225,7 @@ def execute_video_job(
 
         # Run generation
         output_path = rd / "output.mp4"
-        _, elapsed, num_frames = generator.generate(
+        _, elapsed, num_frames, vram_data, timing_breakdown = generator.generate(
             input_image=source_image,
             prompt=request.prompt,
             fps=params["fps"],
@@ -239,6 +243,15 @@ def execute_video_job(
         thumb_path = rd / "thumb.jpg"
         generate_thumbnail(input_path, thumb_path)
 
+        # Calculate actual output dimensions based on resolution and aspect ratio
+        resolution_str = params.get("resolution", "480p")
+        img_width, img_height = source_image.size
+        is_landscape = img_width >= img_height
+        if resolution_str == "720p":
+            video_width, video_height = (1280, 704) if is_landscape else (704, 1280)
+        else:  # 480p (default)
+            video_width, video_height = (832, 480) if is_landscape else (480, 832)
+
         # Save metadata
         meta = {
             "type": "video",
@@ -251,7 +264,9 @@ def execute_video_job(
             "params": {
                 "preset": request.preset,
                 "seed": request.seed,
-                "resolution": params.get("resolution", "480p"),
+                "resolution": resolution_str,
+                "width": video_width,
+                "height": video_height,
                 "fps": params["fps"],
                 "duration_seconds": params["duration_seconds"],
                 "num_inference_steps": params["num_inference_steps"],
@@ -264,8 +279,13 @@ def execute_video_job(
             },
             "device": DEVICE,
             "dtype": str(DTYPE),
+            "gpu_name": GPU_NAME,
+            "gpu_arch": GPU_ARCH,
             "seconds_elapsed": elapsed,
             "num_frames": num_frames,
+            "vram_used": vram_data.get("allocated", 0.0),
+            "vram_reserved": vram_data.get("reserved", 0.0),
+            "timing": timing_breakdown,
         }
         write_json(rd / "meta.json", meta)
 
@@ -276,7 +296,7 @@ def execute_video_job(
 
         return rid, rd
 
-    except InterruptedError as e:
+    except InterruptedError:
         # Job was cancelled by user
         logger.info(f"[{job_id}] Video generation cancelled")
         # State is already marked as cancelled by the callback

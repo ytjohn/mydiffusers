@@ -6,13 +6,12 @@ anatomy, and style.
 """
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import torch
 from PIL import Image
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +188,7 @@ class PromptAssistant:
         # Trim input tokens and decode
         generated_ids_trimmed = [
             out_ids[len(in_ids):]
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            for in_ids, out_ids in zip(inputs.input_ids, generated_ids, strict=False)
         ]
         response_text = self.processor.batch_decode(
             generated_ids_trimmed,
@@ -217,7 +216,7 @@ class PromptAssistant:
         # - Individual suggestions with rationales
         # - Tips section
 
-        lines = response.strip().split('\n')
+        response.strip().split('\n')
 
         return {
             'analysis': response[:200] + "..." if len(response) > 200 else response,

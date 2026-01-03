@@ -240,6 +240,36 @@ function renderWorkerCards(workers) {
                 </div>
             `;
 
+            // VRAM Prediction
+            if (h.vram_prediction) {
+                html += `
+                    <div class="worker-section">
+                        <div class="section-title">
+                            VRAM Predictions
+                            <span class="info-icon" title="Estimated VRAM usage for different generation tasks. These are approximate values based on model parameters.">ⓘ</span>
+                        </div>
+                        <div style="margin-top: 8px;">
+                            <div class="metric-row">
+                                <span class="metric-label">Image (720p)</span>
+                                <span class="metric-value">~${escapeHtml((h.vram_prediction.model_sizes?.image?.['z-image-turbo'] || 9.2).toFixed(1))} GB</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Video (5B, 5s)</span>
+                                <span class="metric-value">~${escapeHtml((h.vram_prediction.model_sizes?.video?.['wan-2.1-5b'] || 8.5).toFixed(1))} GB</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Video (14B, 5s)</span>
+                                <span class="metric-value">~${escapeHtml((h.vram_prediction.model_sizes?.video?.['wan-2.1-14b'] || 18.2).toFixed(1))} GB</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Assistant (7B)</span>
+                                <span class="metric-value">~${escapeHtml((h.vram_prediction.model_sizes?.assistant?.['qwen2-vl-7b'] || 23.8).toFixed(1))} GB</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             // Platform Info
             html += `
                 <div class="worker-section">

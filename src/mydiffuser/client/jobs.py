@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -10,10 +10,14 @@ from typing import Literal
 import httpx
 from PIL import Image
 
-from mydiffuser.client.config import get_worker_endpoint, DEFAULT_WORKER_JOB_POLL_INTERVAL, list_workers
+from mydiffuser.client import database
+from mydiffuser.client.config import (
+    DEFAULT_WORKER_JOB_POLL_INTERVAL,
+    get_worker_endpoint,
+    list_workers,
+)
 from mydiffuser.client.worker_client import WorkerClient
 from mydiffuser.utils.paths import run_dir
-from mydiffuser.client import database
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,7 @@ class ClientJob:
     # Client-side info
     local_run_id: str | None = None  # Run ID after fetching to local
     error: str | None = None  # Error message if failed
+    request_parameters: dict | None = None  # Request parameters
 
     # Timing
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -62,19 +67,35 @@ def _dict_to_job(data: dict) -> ClientJob:
     """Convert database dict to ClientJob dataclass."""
     # Filter out database-only fields that aren't in ClientJob
     job_fields = {
-        'job_id', 'type', 'worker_name', 'worker_endpoint', 'status',
-        'prompt', 'preset', 'seed', 'worker_run_id', 'worker_progress',
-        'worker_step', 'worker_total_steps', 'worker_message',
-        'local_run_id', 'error', 'created_at', 'submitted_at',
-        'completed_at', 'fetched_at'
+        "job_id",
+        "type",
+        "worker_name",
+        "worker_endpoint",
+        "status",
+        "prompt",
+        "preset",
+        "seed",
+        "worker_run_id",
+        "worker_progress",
+        "worker_step",
+        "worker_total_steps",
+        "worker_message",
+        "local_run_id",
+        "error",
+        "created_at",
+        "submitted_at",
+        "completed_at",
+        "fetched_at",
     }
 
     filtered_data = {k: v for k, v in data.items() if k in job_fields}
 
     # Convert ISO strings back to datetime objects
-    for field in ['created_at', 'submitted_at', 'completed_at', 'fetched_at']:
-        if filtered_data.get(field):
-            filtered_data[field] = datetime.fromisoformat(filtered_data[field])
+    for field_name in ["created_at", "submitted_at", "completed_at", "fetched_at"]:
+        if filtered_data.get(field_name):
+            filtered_data[field_name] = datetime.fromisoformat(
+                filtered_data[field_name]
+            )
 
     return ClientJob(**filtered_data)
 
@@ -157,20 +178,20 @@ def update_job_status(job_id: str, status_data: dict) -> None:
 
     # Prepare updates dict
     updates = {
-        'status': status_data.get("status", "running"),
-        'worker_progress': status_data.get("progress", 0.0),
-        'worker_step': status_data.get("current_step", 0),
-        'worker_total_steps': status_data.get("total_steps", 0),
-        'worker_message': status_data.get("message"),
-        'worker_run_id': status_data.get("run_id"),
-        'error': status_data.get("error"),
+        "status": status_data.get("status", "running"),
+        "worker_progress": status_data.get("progress", 0.0),
+        "worker_step": status_data.get("current_step", 0),
+        "worker_total_steps": status_data.get("total_steps", 0),
+        "worker_message": status_data.get("message"),
+        "worker_run_id": status_data.get("run_id"),
+        "error": status_data.get("error"),
     }
 
     # Set completed_at timestamp if status changed to complete/failed
-    if updates['status'] == "complete" and job.completed_at is None:
-        updates['completed_at'] = datetime.now(UTC)
-    elif updates['status'] == "failed":
-        updates['completed_at'] = datetime.now(UTC)
+    if updates["status"] == "complete" and job.completed_at is None:
+        updates["completed_at"] = datetime.now(UTC)
+    elif updates["status"] == "failed":
+        updates["completed_at"] = datetime.now(UTC)
 
     # Persist to database
     database.update_client_job_status(job_id, updates)
@@ -209,22 +230,21 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
                     return None
 
                 if job.status == "complete":
-                    logger.info(f"Job {job_id} complete, fetching results...")
                     break
-                elif job.status == "failed":
-                    logger.error(f"Job {job_id} failed: {job.error}")
-                    return None
 
-                # Wait before next poll
-                await asyncio.sleep(DEFAULT_WORKER_JOB_POLL_INTERVAL)
+                if job.status == "failed":
+                    logger.error(f"Job {job_id} failed on worker")
+                    return None
 
             except Exception as e:
                 logger.exception(f"Error polling job {job_id}: {e}")
-                database.update_client_job_status(job_id, {
-                    'status': 'failed',
-                    'error': str(e)
-                })
+                database.update_client_job_status(
+                    job_id, {"status": "failed", "error": str(e)}
+                )
                 return None
+
+            # Wait before next poll
+            await asyncio.sleep(DEFAULT_WORKER_JOB_POLL_INTERVAL)
 
         # Fetch results
         try:
@@ -236,31 +256,90 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
             client.fetch_results(job_id, local_dir)
 
             # Update job with fetch completion
-            database.update_client_job_status(job_id, {
-                'local_run_id': job.worker_run_id,
-                'fetched_at': datetime.now(UTC)
-            })
+            database.update_client_job_status(
+                job_id,
+                {"local_run_id": job.worker_run_id, "fetched_at": datetime.now(UTC)},
+            )
 
             # Index run in SQLite database
             from mydiffuser.utils.paths import read_json
+
             meta_file = local_dir / "meta.json"
             if meta_file.exists():
                 try:
                     meta = read_json(meta_file)
+
+                    # Add performance tracking
+                    try:
+                        from mydiffuser.database import performance_tracker
+
+                        # Extract parameters and actual performance data
+                        params = meta.get("params", {})
+                        parameters = {
+                            "width": params.get("width") or meta.get("width"),
+                            "height": params.get("height") or meta.get("height"),
+                            "num_inference_steps": params.get("num_inference_steps")
+                            or meta.get("num_inference_steps"),
+                            "guidance_scale": params.get("guidance_scale")
+                            or meta.get("guidance_scale"),
+                            "seed": params.get("seed") or meta.get("seed"),
+                            "device": meta.get("device"),
+                            "dtype": meta.get("dtype"),
+                            "preset": params.get("preset") or meta.get("preset"),
+                        }
+
+                        # Determine model from meta data
+                        model_id = "Tongyi-MAI/Z-Image-Turbo"  # Default based on your actual usage
+                        if job.type == "video":
+                            model_id = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+
+                        # Calculate estimates for this actual run
+                        from mydiffuser.client.estimate import job_estimator
+
+                        try:
+                            vram_estimates = job_estimator.estimate_job(
+                                job.type, model_id, parameters, job.worker_name
+                            )
+                            vram_predicted = vram_estimates.vram_total_needed
+                            time_predicted = vram_estimates.time_estimate_seconds
+                        except Exception as e:
+                            logger.warning(f"Estimation failed for job {job_id}: {e}")
+                            vram_predicted = 19.3 if job.type == "image" else 11.7
+                            time_predicted = 300
+
+                        # Record actual performance data
+                        # Extract actual VRAM from metadata if available, otherwise use estimates
+                        actual_vram_total = meta.get("vram_used", vram_predicted)
+
+                        performance_tracker.record_job_performance(
+                            job_id=job_id,
+                            worker_id=job.worker_name,
+                            model_id=model_id,
+                            model_type=job.type,
+                            parameters=parameters,
+                            vram_estimates={"total": vram_predicted},
+                            vram_actual={
+                                "total": actual_vram_total,
+                                "model": actual_vram_total,  # Use allocated as model VRAM
+                            },
+                            model_was_loaded=False,
+                            time_estimates={"predicted": time_predicted},
+                            time_actual=meta.get("seconds_elapsed")
+                            or meta.get("seconds", 0),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record performance data: {e}")
+
                     database.index_run(job.worker_run_id, meta)
-                    logger.info(f"Indexed run {job.worker_run_id} in database")
                 except Exception as e:
                     logger.warning(f"Failed to index run {job.worker_run_id}: {e}")
-
-            logger.info(f"Job {job_id} results fetched to {local_dir}")
-            return local_dir
+            return run_dir(job.worker_run_id)
 
         except Exception as e:
-            logger.exception(f"Error fetching results for job {job_id}: {e}")
-            database.update_client_job_status(job_id, {
-                'status': 'failed',
-                'error': f"Fetch failed: {e}"
-            })
+            logger.exception(f"Error handling completed job {job_id}: {e}")
+            database.update_client_job_status(
+                job_id, {"status": "failed", "error": str(e)}
+            )
             return None
 
 
@@ -429,12 +508,18 @@ async def sync_jobs_from_workers() -> dict[str, int]:
 
     # First, try to fetch any completed jobs that were never fetched
     unfetched_jobs = database.list_client_jobs(limit=100)
-    unfetched = [j for j in unfetched_jobs if j['status'] == 'complete' and j['fetched_at'] is None]
+    unfetched = [
+        j
+        for j in unfetched_jobs
+        if j["status"] == "complete" and j["fetched_at"] is None
+    ]
 
     if unfetched:
-        logger.info(f"Found {len(unfetched)} completed jobs that were never fetched, attempting recovery...")
+        logger.info(
+            f"Found {len(unfetched)} completed jobs that were never fetched, attempting recovery..."
+        )
         for job_data in unfetched:
-            job_id = job_data['job_id']
+            job_id = job_data["job_id"]
             logger.info(f"Attempting to fetch results for job {job_id}")
             asyncio.create_task(poll_and_fetch_job(job_id))
 
@@ -470,7 +555,9 @@ async def sync_jobs_from_workers() -> dict[str, int]:
                     continue
 
                 # Recover the job
-                logger.info(f"Recovering job {job_id} from worker {worker_name} (status: {status})")
+                logger.info(
+                    f"Recovering job {job_id} from worker {worker_name} (status: {status})"
+                )
 
                 # Create ClientJob from worker data
                 # Note: We don't have full request info, but we can track the job
@@ -480,7 +567,7 @@ async def sync_jobs_from_workers() -> dict[str, int]:
                     worker_name=worker_name,
                     worker_endpoint=endpoint,
                     status=status,
-                    prompt=f"(Recovered from worker - in progress)",
+                    prompt="(Recovered from worker - in progress)",
                     worker_progress=job_data.get("progress", 0.0),
                     worker_step=job_data.get("current_step", 0),
                     worker_total_steps=job_data.get("total_steps", 0),

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Literal
 import torch
 
 from mydiffuser.config import LAZY_LOADING
-from mydiffuser import shutdown
 
 if TYPE_CHECKING:
     from mydiffuser.generators.image import ImageGenerator
@@ -331,10 +330,3 @@ def unload_model(model_type: Literal["image", "video", "assistant"]) -> dict:
 
 
 # Re-export shutdown functions for backwards compatibility
-from mydiffuser.shutdown import (
-    request_shutdown,
-    is_shutdown_requested,
-    check_shutdown,
-    reset_shutdown,
-    ShutdownRequested,
-)

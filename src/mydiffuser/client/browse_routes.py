@@ -13,7 +13,6 @@ from mydiffuser.config import RUNS_DIR, THUMBS_CACHE_DIR
 from mydiffuser.utils.paths import (
     find_run_dir,
     get_run_type,
-    list_all_runs,
     read_json,
 )
 
@@ -132,6 +131,7 @@ def _validate_run_path(run_id: str) -> Path:
 def get_all_tags() -> dict:
     """Get all unique tags from SQLite database."""
     from mydiffuser.client import database
+
     tags = database.get_all_tags()
     return {"tags": tags}
 
@@ -141,8 +141,12 @@ def list_runs(
     type: Literal["all", "image", "video", "img2img"] = Query(
         default="all", description="Filter by run type"
     ),
-    include_tags: str = Query(default="", description="Comma-separated tags to include (OR logic)"),
-    show_nsfw: bool = Query(default=False, description="Include NSFW content in results"),
+    include_tags: str = Query(
+        default="", description="Comma-separated tags to include (OR logic)"
+    ),
+    show_nsfw: bool = Query(
+        default=False, description="Include NSFW content in results"
+    ),
     page: int = Query(default=1, ge=1, description="Page number"),
     limit: int = Query(default=24, ge=1, le=100, description="Items per page"),
 ) -> RunListResponse:
@@ -158,7 +162,11 @@ def list_runs(
     from mydiffuser.client import database
 
     # Parse included tags
-    included = [t.strip() for t in include_tags.split(",") if t.strip()] if include_tags else []
+    included = (
+        [t.strip() for t in include_tags.split(",") if t.strip()]
+        if include_tags
+        else []
+    )
 
     # Query database
     runs_data, total = database.get_runs(
@@ -166,20 +174,22 @@ def list_runs(
         include_tags=included,
         show_nsfw=show_nsfw,
         page=page,
-        limit=limit
+        limit=limit,
     )
 
     # Convert to RunSummary objects
     runs = []
     for data in runs_data:
-        runs.append(RunSummary(
-            id=data['id'],
-            type=data['type'],
-            prompt_preview=data['prompt'][:100] if data['prompt'] else '',
-            timestamp=_parse_timestamp(data['id']),
-            source_run_id=data.get('source_run_id'),
-            tags=data.get('tags', [])
-        ))
+        runs.append(
+            RunSummary(
+                id=data["id"],
+                type=data["type"],
+                prompt_preview=data["prompt"][:100] if data["prompt"] else "",
+                timestamp=_parse_timestamp(data["id"]),
+                source_run_id=data.get("source_run_id"),
+                tags=data.get("tags", []),
+            )
+        )
 
     pages = (total + limit - 1) // limit if total > 0 else 1
 
@@ -369,6 +379,7 @@ def delete_run(run_id: str) -> dict:
 
     # Delete from SQLite database
     from mydiffuser.client import database
+
     database.delete_run(run_id)
 
     return {"deleted": run_id}
@@ -378,6 +389,20 @@ class UpdateRunRequest(BaseModel):
     """Request model for updating run metadata."""
 
     tags: list[str] | None = None
+
+
+class BulkTagRequest(BaseModel):
+    """Request model for bulk tag operations."""
+
+    run_ids: list[str]
+    tags: list[str]
+    action: Literal["add", "remove"] = "add"
+
+
+class BulkDeleteRequest(BaseModel):
+    """Request model for bulk delete operations."""
+
+    run_ids: list[str]
 
 
 @router.patch("/{run_id}")
@@ -396,12 +421,95 @@ def update_run(run_id: str, update: UpdateRunRequest) -> dict:
 
         # Write updated meta.json
         from mydiffuser.utils.paths import write_json
+
         write_json(meta_file, meta)
 
         # Re-index in SQLite
         from mydiffuser.client import database
+
         database.index_run(run_id, meta)
 
         return {"updated": run_id, "tags": meta.get("tags", [])}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update: {e}") from e
+
+
+@router.post("/bulk/tag")
+def bulk_update_tags(request: BulkTagRequest) -> dict:
+    """Add or remove tags from multiple runs in bulk."""
+    from mydiffuser.client import database
+    from mydiffuser.utils.paths import write_json
+
+    updated_count = 0
+    errors = []
+
+    for run_id in request.run_ids:
+        try:
+            run_dir_path = _validate_run_path(run_id)
+            meta_file = run_dir_path / "meta.json"
+
+            if not meta_file.exists():
+                errors.append(f"{run_id}: metadata not found")
+                continue
+
+            meta = read_json(meta_file)
+            current_tags = set(meta.get("tags", []))
+
+            if request.action == "add":
+                current_tags.update(request.tags)
+            else:  # remove
+                current_tags.difference_update(request.tags)
+
+            meta["tags"] = list(current_tags)
+            write_json(meta_file, meta)
+
+            # Re-index in SQLite
+            database.index_run(run_id, meta)
+            updated_count += 1
+
+        except Exception as e:
+            errors.append(f"{run_id}: {e!s}")
+
+    return {"updated": updated_count, "total": len(request.run_ids), "errors": errors}
+
+
+@router.post("/bulk/delete")
+def bulk_delete_runs(request: BulkDeleteRequest) -> dict:
+    """Delete multiple runs in bulk."""
+    from mydiffuser.client import database
+
+    deleted_count = 0
+    errors = []
+
+    for run_id in request.run_ids:
+        try:
+            run_dir_path = _validate_run_path(run_id)
+
+            # Delete cached thumbnail if exists
+            cached_thumb = THUMBS_CACHE_DIR / f"{run_id}.jpg"
+            if cached_thumb.exists():
+                try:
+                    cached_thumb.unlink()
+                except Exception:
+                    pass
+
+            cached_thumb_png = THUMBS_CACHE_DIR / f"{run_id}.png"
+            if cached_thumb_png.exists():
+                try:
+                    cached_thumb_png.unlink()
+                except Exception:
+                    pass
+
+            # Delete run directory
+            shutil.rmtree(run_dir_path)
+
+            # Delete from SQLite database
+            database.delete_run(run_id)
+            deleted_count += 1
+
+        except HTTPException as e:
+            errors.append(f"{run_id}: {e.detail}")
+        except Exception as e:
+            errors.append(f"{run_id}: {e!s}")
+
+    return {"deleted": deleted_count, "total": len(request.run_ids), "errors": errors}

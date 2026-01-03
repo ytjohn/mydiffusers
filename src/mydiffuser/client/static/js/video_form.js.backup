@@ -1,11 +1,11 @@
 // Video presets (populate form fields)
-const VIDEO_PRESETS = {
+        const VIDEO_PRESETS = {
             draft: { duration: 3, fps: 12, steps: 15, guidance: 3.0, resolution: "480p" },
             final: { duration: 5, fps: 16, steps: 30, guidance: 3.5, resolution: "720p" },
             hq: { duration: 7, fps: 24, steps: 50, guidance: 4.0, resolution: "720p" },
-};
+        };
 
-function applyVideoPreset(name) {
+        function applyVideoPreset(name) {
             const preset = VIDEO_PRESETS[name];
             if (!preset) return;
 
@@ -14,13 +14,13 @@ function applyVideoPreset(name) {
             document.getElementById('vsteps').value = preset.steps;
             document.getElementById('vguidance').value = preset.guidance;
             document.getElementById('resolution').value = preset.resolution;
-
+            
             // Trigger estimation update after applying preset
             updateVideoEstimates();
-}
+        }
 
-// Load form from query parameters (for "Generate Video" from Browse)
-function loadFromQueryParams() {
+        // Load form from query parameters (for "Generate Video" from Browse)
+        function loadFromQueryParams() {
             const params = new URLSearchParams(window.location.search);
 
             if (params.has('source')) {
@@ -33,13 +33,10 @@ function loadFromQueryParams() {
             if (params.toString()) {
                 window.history.replaceState({}, '', '/generate/video');
             }
-}
+        }
 
-// Load on page load
-loadFromQueryParams();
-
-// Real-time VRAM and time estimation
-async function updateVideoEstimates() {
+        // Real-time VRAM and time estimation
+        async function updateVideoEstimates() {
             const duration = parseFloat(document.getElementById('duration').value) || 3;
             const fps = parseInt(document.getElementById('fps').value) || 12;
             const steps = parseInt(document.getElementById('vsteps').value) || 15;
@@ -52,7 +49,7 @@ async function updateVideoEstimates() {
                 '720p': { width: 1280, height: 704 },
                 '1080p': { width: 1920, height: 1088 }
             };
-
+            
             const dims = resolutionMap[resolution] || resolutionMap['480p'];
             const numFrames = Math.round(duration * fps);
 
@@ -81,14 +78,14 @@ async function updateVideoEstimates() {
                 const vramDiv = document.getElementById('estimate-vram');
                 const timeDiv = document.getElementById('estimate-time');
                 const warningDiv = document.getElementById('estimate-warning');
-
-                const timeDisplay = result.time_estimate_seconds >= 60
+                
+                const timeDisplay = result.time_estimate_seconds >= 60 
                     ? `${Math.floor(result.time_estimate_seconds / 60)}m ${result.time_estimate_seconds % 60}s`
                     : `${result.time_estimate_seconds}s`;
-
+                
                 vramDiv.innerHTML = `<strong>VRAM:</strong> ${result.vram_total_needed.toFixed(1)} GB`;
                 timeDiv.innerHTML = `<strong>Time:</strong> ${timeDisplay}`;
-
+                
                 if (!result.worker_available) {
                     warningDiv.innerHTML = `⚠ <strong>Warning:</strong> Worker may not have enough VRAM (${numFrames} frames @ ${fps} fps, ${resolution})`;
                     warningDiv.style.display = 'block';
@@ -96,16 +93,46 @@ async function updateVideoEstimates() {
                 } else {
                     warningDiv.style.display = 'none';
                 }
-
+                
                 estimatesDiv.style.display = 'block';
-
+                
             } catch (error) {
                 console.error('Error getting estimates:', error);
             }
-}
+        }
 
-// Worker capabilities management
-async function updateWorkerCapabilities() {
+                const estimatesContainer = document.getElementById('estimates');
+                const timeDisplay = result.time_estimate_seconds >= 60 
+                    ? `${Math.floor(result.time_estimate_seconds / 60)}m ${result.time_estimate_seconds % 60}s`
+                    : `${result.time_estimate_seconds}s`;
+                
+                estimatesContainer.innerHTML = `
+                    <strong>📊 Resource Estimate:</strong><br>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                        <div>VRAM: ${result.vram_total_needed.toFixed(1)} GB</div>
+                        <div>Time: ${timeDisplay}</div>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #656d76;">
+                        ${numFrames} frames @ ${fps} fps (${resolution})
+                    </div>
+                    ${!result.worker_available ? '<div style="color: #d1242f; margin-top: 8px;">⚠ Worker may not have enough VRAM</div>' : ''}
+                `;
+                
+                // Make estimates visible
+                estimatesContainer.style.display = 'block';
+                estimatesContainer.style.background = '#f1f8ff';
+                estimatesContainer.style.borderColor = '#0366d6';
+                
+            } catch (error) {
+                console.error('Error getting estimates:', error);
+            }
+        }
+
+        // Load on page load
+        loadFromQueryParams();
+
+        // Worker capabilities management
+        async function updateWorkerCapabilities() {
             const workerSelect = document.getElementById('worker');
             const modelSelect = document.getElementById('modelSize');
             const modelInfo = document.getElementById('modelInfo');
@@ -158,26 +185,26 @@ async function updateWorkerCapabilities() {
                 modelInfo.textContent = `Failed to query worker: ${error.message}`;
                 modelInfo.style.color = '#f85149';
             }
-}
+        }
 
-// Update capabilities on worker change
-document.getElementById('worker').addEventListener('change', updateWorkerCapabilities);
+        // Update capabilities on worker change
+        document.getElementById('worker').addEventListener('change', updateWorkerCapabilities);
 
-// Load capabilities on page load
-updateWorkerCapabilities();
-
-// Add event listeners for real-time estimates
-['duration', 'fps', 'vsteps', 'vguidance', 'resolution'].forEach(id => {
+        // Load capabilities on page load
+        updateWorkerCapabilities();
+        
+        // Add event listeners for real-time estimates
+        ['duration', 'fps', 'vsteps', 'vguidance', 'resolution'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateVideoEstimates);
             document.getElementById(id).addEventListener('change', updateVideoEstimates);
-});
+        });
+        
+        // Initial estimate
+        console.log('Setting up video real-time estimates...');
+        updateVideoEstimates();
 
-// Initial estimate
-console.log('Setting up video real-time estimates...');
-updateVideoEstimates();
-
-// Load and preview image from run ID
-async function loadSourcePreview() {
+        // Load and preview image from run ID
+        async function loadSourcePreview() {
             const runId = document.getElementById('sourceRunId').value.trim();
             if (!runId) return;
 
@@ -208,9 +235,9 @@ async function loadSourcePreview() {
                 preview.style.display = 'none';
                 fileUpload.classList.remove('has-file');
             }
-}
+        }
 
-function previewImage(event) {
+        function previewImage(event) {
             const file = event.target.files[0];
             if (file) {
                 // Clear run ID when uploading a file
@@ -226,9 +253,9 @@ function previewImage(event) {
                 };
                 reader.readAsDataURL(file);
             }
-}
+        }
 
-async function submitVideoJob(event) {
+        async function submitVideoJob(event) {
             event.preventDefault();
 
             const form = document.getElementById('videoForm');
@@ -302,9 +329,9 @@ async function submitVideoJob(event) {
                 statusDiv.className = 'error';
                 statusDiv.textContent = '✗ Error: ' + error.message;
             }
-}
+        }
 
-async function pollJobStatus(jobId) {
+        async function pollJobStatus(jobId) {
             const statusSpan = document.getElementById('progressStatus');
             const statusDiv = document.getElementById('status');
 
@@ -371,4 +398,4 @@ async function pollJobStatus(jobId) {
             };
 
             poll();
-}
+        }

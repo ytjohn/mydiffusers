@@ -9,7 +9,6 @@ This is a lightweight UI server that:
 
 import logging
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
 from fastapi import FastAPI, Request

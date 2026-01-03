@@ -1,11 +1,11 @@
-"""Generation presets for image and video."""
+"""Generation presets for image and video with VRAM estimates."""
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mydiffuser.models.requests import GenerateImageRequest, GenerateVideoRequest
 
-# Image generation presets
+# Image generation presets with VRAM estimates (in GB)
 # Using 16:9 landscape aspect ratio for video-friendly output
 # Wan2.2 5B model prefers 1280x704 (720p) or 832x480 (480p)
 PRESETS = {
@@ -15,6 +15,7 @@ PRESETS = {
         "width": 832,
         "num_inference_steps": 4,
         "guidance_scale": 0.0,
+        "estimated_vram_gb": 6.5,  # 480p, 4 steps
     },
     # Higher quality preset - 720p landscape (video-friendly)
     "final": {
@@ -22,32 +23,34 @@ PRESETS = {
         "width": 1280,
         "num_inference_steps": 8,
         "guidance_scale": 0.0,
+        "estimated_vram_gb": 9.2,  # 720p, 8 steps
     },
 }
 
 # Common aspect ratios for image generation
 # These match Wan2.2 video model preferred resolutions
 IMAGE_ASPECT_RATIOS = {
-    "landscape": {"width": 1280, "height": 704},   # 16:9 landscape 720p
-    "portrait": {"width": 704, "height": 1280},    # 9:16 portrait 720p
-    "square": {"width": 1024, "height": 1024},     # 1:1 square
+    "landscape": {"width": 1280, "height": 704},  # 16:9 landscape 720p
+    "portrait": {"width": 704, "height": 1280},  # 9:16 portrait 720p
+    "square": {"width": 1024, "height": 1024},  # 1:1 square
     "landscape_480": {"width": 832, "height": 480},  # 16:9 landscape 480p
-    "portrait_480": {"width": 480, "height": 832},   # 9:16 portrait 480p
+    "portrait_480": {"width": 480, "height": 832},  # 9:16 portrait 480p
 }
 
-# Video generation presets for Wan2.2
+# Video generation presets for Wan2.2 with VRAM estimates
 # See https://huggingface.co/Wan-AI for available models
 VIDEO_PRESETS = {
-    # Fast iteration - fewer steps
+    # Fast iteration - fewer steps, 5B model
     "draft": {
-        "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "model": "Wan-AI/Wan2.1-I2V-1.3B-480P",
         "resolution": "480p",
         "fps": 12,
         "duration_seconds": 3,
         "num_inference_steps": 15,
         "guidance_scale": 3.0,
+        "estimated_vram_gb": 8.5,  # 5B model, 3s, 12fps
     },
-    # Balanced quality
+    # Balanced quality - 14B model
     "final": {
         "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "resolution": "720p",
@@ -55,8 +58,9 @@ VIDEO_PRESETS = {
         "duration_seconds": 5,
         "num_inference_steps": 30,
         "guidance_scale": 3.5,
+        "estimated_vram_gb": 18.2,  # 14B model, 5s, 16fps
     },
-    # Higher quality - more steps
+    # Higher quality - 14B model, longer
     "hq": {
         "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "resolution": "720p",
@@ -64,6 +68,7 @@ VIDEO_PRESETS = {
         "duration_seconds": 7,
         "num_inference_steps": 50,
         "guidance_scale": 4.0,
+        "estimated_vram_gb": 25.8,  # 14B model, 7s, 24fps
     },
 }
 
@@ -123,6 +128,20 @@ def apply_preset(req: "GenerateImageRequest") -> dict:
     if not (256 <= h <= 2048 and 256 <= w <= 2048):
         raise ValueError("height/width must be within 256..2048")
 
+    # Add VRAM estimate if not present
+    if "estimated_vram_gb" not in base:
+        from mydiffuser.utils.vram_predictor import vram_predictor
+
+        try:
+            estimate = vram_predictor.estimate_image_vram(
+                width=base["width"],
+                height=base["height"],
+                num_inference_steps=base["num_inference_steps"],
+            )
+            base["estimated_vram_gb"] = round(estimate.total_estimate_gb, 1)
+        except Exception:
+            base["estimated_vram_gb"] = 8.0  # Default fallback
+
     return base
 
 
@@ -175,5 +194,24 @@ def apply_video_preset(req: "GenerateVideoRequest") -> dict:
     if not valid_duration:
         raise ValueError("duration_seconds must be between 1 and 30")
 
-    return base
+    # Add VRAM estimate if not present
+    if "estimated_vram_gb" not in base:
+        from mydiffuser.utils.vram_predictor import vram_predictor
 
+        try:
+            # Calculate frames
+            num_frames = base["fps"] * base["duration_seconds"]
+            estimate = vram_predictor.estimate_video_vram(
+                model_name="wan-2.1-5b"
+                if "1.3B" in str(base.get("model", ""))
+                else "wan-2.1-14b",
+                width=1280 if "720p" in str(base.get("resolution", "")) else 832,
+                height=704 if "720p" in str(base.get("resolution", "")) else 480,
+                num_frames=num_frames,
+                num_inference_steps=base["num_inference_steps"],
+            )
+            base["estimated_vram_gb"] = round(estimate.total_estimate_gb, 1)
+        except Exception:
+            base["estimated_vram_gb"] = 15.0  # Default fallback
+
+    return base

@@ -132,7 +132,7 @@ class ImageGenerator(BaseGenerator):
         seed: int,
         run_id: str = "",
         callback_on_step_end = None,
-    ) -> tuple[Image.Image, float]:
+    ) -> tuple[Image.Image, float, dict[str, float], dict[str, float]]:
         """Generate an image from a text prompt.
 
         Args:
@@ -146,10 +146,14 @@ class ImageGenerator(BaseGenerator):
             callback_on_step_end: Optional callback function for progress updates
 
         Returns:
-            Tuple of (PIL Image, generation time in seconds)
+            Tuple of (PIL Image, generation time in seconds, VRAM usage dict, timing breakdown dict)
         """
         self.ensure_loaded()
         check_shutdown()
+
+        # Reset GPU memory stats to get accurate peak usage for this generation
+        if DEVICE == "cuda" and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
 
         t0 = time.time()
         logger.info("phase: start, runid=%s", run_id)
@@ -161,7 +165,7 @@ class ImageGenerator(BaseGenerator):
         if callback_on_step_end is not None:
             def _combined_callback(pipe, step_index, timestep, callback_kwargs):
                 # Run shutdown check first
-                shutdown_result = _shutdown_callback(pipe, step_index, timestep, callback_kwargs)
+                _shutdown_callback(pipe, step_index, timestep, callback_kwargs)
                 # Then run custom callback
                 custom_result = callback_on_step_end(pipe, step_index, timestep, callback_kwargs)
                 return custom_result
@@ -191,8 +195,31 @@ class ImageGenerator(BaseGenerator):
         t2 = time.time()
         logger.info("phase: cuda.synchronize done in %.2fs, runid=%s", t2 - t1, run_id)
 
+        # Capture actual VRAM usage
+        vram_data = {}
+        if DEVICE == "cuda" and torch.cuda.is_available():
+            vram_allocated = torch.cuda.max_memory_allocated() / (1024**3)  # GiB
+            vram_reserved = torch.cuda.max_memory_reserved() / (1024**3)    # GiB
+            vram_data = {
+                "allocated": vram_allocated,
+                "reserved": vram_reserved,
+            }
+            logger.info(
+                "VRAM usage for generation: %.2f GiB allocated, %.2f GiB reserved, runid=%s",
+                vram_allocated,
+                vram_reserved,
+                run_id,
+            )
+
         img = out.images[0]
         dt = time.time() - t0
         logger.info("phase: total done in %.2fs, runid=%s", dt, run_id)
 
-        return img, dt
+        # Build timing breakdown
+        timing_breakdown = {
+            "inference": t1 - t0,  # Pipeline execution time
+            "synchronize": t2 - t1,  # GPU synchronization overhead
+            "total": dt,
+        }
+
+        return img, dt, vram_data, timing_breakdown

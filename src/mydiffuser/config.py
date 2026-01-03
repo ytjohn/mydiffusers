@@ -75,6 +75,75 @@ IS_CPU = PLATFORM == "cpu"
 
 
 # ============================================================================
+# GPU Identification
+# ============================================================================
+
+def _detect_gpu_info() -> tuple[str, str]:
+    """Detect GPU name and architecture.
+
+    Returns:
+        Tuple of (gpu_name, gpu_arch)
+        - gpu_name: Human-readable GPU name (e.g., "AMD Max+ 395", "NVIDIA A100-SXM4-40GB")
+        - gpu_arch: Architecture identifier (e.g., "gfx1151", "sm_80")
+    """
+    if not _TORCH_AVAILABLE or torch is None or not torch.cuda.is_available():
+        return "CPU", "none"
+
+    # Skip detection if explicitly disabled
+    if os.environ.get("MYDIFFUSER_SKIP_GPU_DETECT") == "1":
+        return "Unknown GPU", "unknown"
+
+    try:
+        gpu_name = torch.cuda.get_device_name(0)
+
+        # Detect architecture
+        if IS_ROCM:
+            # For ROCm/AMD, try to get gcnArchName from device properties
+            try:
+                props = torch.cuda.get_device_properties(0)
+                # ROCm exposes gcnArchName in device properties
+                if hasattr(props, 'gcnArchName'):
+                    gpu_arch = props.gcnArchName
+                else:
+                    # Fallback: parse from name or use generic
+                    if "gfx" in gpu_name.lower():
+                        # Extract gfx identifier from name
+                        import re
+                        match = re.search(r'gfx\w+', gpu_name.lower())
+                        gpu_arch = match.group(0) if match else "gfx_unknown"
+                    else:
+                        gpu_arch = "rocm_unknown"
+            except Exception:
+                gpu_arch = "rocm_unknown"
+        else:
+            # For CUDA/NVIDIA, get compute capability
+            try:
+                props = torch.cuda.get_device_properties(0)
+                major = props.major
+                minor = props.minor
+                gpu_arch = f"sm_{major}{minor}"
+            except Exception:
+                gpu_arch = "cuda_unknown"
+
+        return gpu_name, gpu_arch
+
+    except Exception as e:
+        logger.warning(f"GPU info detection failed: {e}")
+        return "Unknown GPU", "unknown"
+
+
+# Detect GPU information - defer if detection is disabled
+if os.environ.get("MYDIFFUSER_SKIP_GPU_DETECT") == "1":
+    GPU_NAME, GPU_ARCH = "Unknown GPU", "unknown"
+else:
+    try:
+        GPU_NAME, GPU_ARCH = _detect_gpu_info()
+    except Exception as e:
+        logger.error(f"GPU info detection failed: {e}")
+        GPU_NAME, GPU_ARCH = "Unknown GPU", "unknown"
+
+
+# ============================================================================
 # Device & Dtype Configuration
 # ============================================================================
 

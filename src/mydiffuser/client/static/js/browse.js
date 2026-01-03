@@ -164,9 +164,12 @@ async function loadRuns() {
     html += '</div>';
     contentEl.innerHTML = html;
 
-    // Add click handlers
+    // Add click handlers - skip if in bulk mode or clicking checkbox
     contentEl.querySelectorAll(".thumb-card").forEach(card => {
-      card.addEventListener("click", () => openModal(card.dataset.id, card.dataset.type));
+      card.addEventListener("click", (e) => {
+        if (e.target.classList.contains('bulk-checkbox')) return;
+        openModal(card.dataset.id, card.dataset.type);
+      });
     });
 
     // Update pagination
@@ -410,6 +413,219 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+let bulkSelectionMode = false;
+let selectedRuns = new Set();
+
+// Bulk controls elements
+const bulkControlsEl = document.getElementById('bulkControls');
+const bulkCountEl = document.getElementById('bulkCount');
+const bulkSelectAllBtn = document.getElementById('bulkSelectAll');
+const bulkDeselectAllBtn = document.getElementById('bulkDeselectAll');
+const bulkTagInput = document.getElementById('bulkTagInput');
+const bulkAddTagsBtn = document.getElementById('bulkAddTags');
+const bulkRemoveTagsBtn = document.getElementById('bulkRemoveTags');
+const bulkDeleteBtn = document.getElementById('bulkDelete');
+
+// Toggle bulk selection mode
+function toggleBulkSelectionMode() {
+  bulkSelectionMode = !bulkSelectionMode;
+  selectedRuns.clear();
+  
+  if (bulkSelectionMode) {
+    bulkControlsEl.style.display = 'block';
+    updateBulkCount();
+    // Add checkboxes to existing cards
+    contentEl.querySelectorAll('.thumb-card').forEach(card => {
+      addCheckboxToCard(card);
+    });
+  } else {
+    bulkControlsEl.style.display = 'none';
+    // Remove checkboxes
+    contentEl.querySelectorAll('.bulk-checkbox').forEach(cb => cb.remove());
+  }
+}
+
+function addCheckboxToCard(card) {
+  if (card.querySelector('.bulk-checkbox')) return;
+  
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = 'bulk-checkbox';
+  checkbox.style.cssText = 'position: absolute; top: 8px; right: 8px; z-index: 10; width: 18px; height: 18px; cursor: pointer;';
+  checkbox.dataset.runId = card.dataset.id;
+  
+  checkbox.addEventListener('change', (e) => {
+    e.stopPropagation();
+    const runId = e.target.dataset.runId;
+    if (e.target.checked) {
+      selectedRuns.add(runId);
+    } else {
+      selectedRuns.delete(runId);
+    }
+    updateBulkCount();
+  });
+  
+  // Prevent card click when clicking checkbox
+  checkbox.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+  
+  card.style.position = 'relative';
+  card.appendChild(checkbox);
+}
+
+function updateBulkCount() {
+  bulkCountEl.textContent = selectedRuns.size;
+  bulkAddTagsBtn.disabled = selectedRuns.size === 0;
+  bulkRemoveTagsBtn.disabled = selectedRuns.size === 0;
+  bulkDeleteBtn.disabled = selectedRuns.size === 0;
+}
+
+// Bulk action handlers
+bulkSelectAllBtn.addEventListener('click', () => {
+  contentEl.querySelectorAll('.thumb-card').forEach(card => {
+    const checkbox = card.querySelector('.bulk-checkbox');
+    if (checkbox) {
+      checkbox.checked = true;
+      selectedRuns.add(card.dataset.id);
+    }
+  });
+  updateBulkCount();
+});
+
+bulkDeselectAllBtn.addEventListener('click', () => {
+  selectedRuns.clear();
+  contentEl.querySelectorAll('.bulk-checkbox').forEach(cb => {
+    cb.checked = false;
+  });
+  updateBulkCount();
+});
+
+  bulkAddTagsBtn.addEventListener('click', async () => {
+    const tags = bulkTagInput.value.trim().toLowerCase();
+    if (!tags || selectedRuns.size === 0) return;
+    
+    const tagList = tags.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+    if (tagList.length === 0) return;
+
+  if (!confirm(`Add tags "${tagList.join(', ')}" to ${selectedRuns.size} selected runs?`)) return;
+
+    try {
+      const requestBody = {
+        run_ids: [...selectedRuns],
+        tags: tagList,
+        action: 'add'
+      };
+      console.log('Request:', requestBody);
+      
+      const resp = await fetch('/api/runs/bulk/tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        console.error('Response error:', resp.status, errorText);
+        throw new Error(`Failed to add tags: ${resp.status} ${errorText}`);
+      }
+    
+    bulkTagInput.value = '';
+    selectedRuns.clear();
+    toggleBulkSelectionMode();
+    await loadTagFilters();
+    loadRuns();
+  } catch (e) {
+    alert(`Error adding tags: ${e.message}`);
+  }
+});
+
+  bulkRemoveTagsBtn.addEventListener('click', async () => {
+    const tags = bulkTagInput.value.trim().toLowerCase();
+    if (!tags || selectedRuns.size === 0) return;
+    
+    const tagList = tags.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+    if (tagList.length === 0) return;
+
+  if (!confirm(`Remove tags "${tagList.join(', ')}" from ${selectedRuns.size} selected runs?`)) return;
+
+  try {
+    const resp = await fetch('/api/bulk/tag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        run_ids: [...selectedRuns],
+        tags: tagList,
+        action: 'remove'
+      })
+    });
+
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        console.error('Response error:', resp.status, errorText);
+        throw new Error(`Failed to remove tags: ${resp.status} ${errorText}`);
+      }
+    
+    bulkTagInput.value = '';
+    selectedRuns.clear();
+    toggleBulkSelectionMode();
+    await loadTagFilters();
+    loadRuns();
+  } catch (e) {
+    alert(`Error removing tags: ${e.message}`);
+  }
+});
+
+bulkDeleteBtn.addEventListener('click', async () => {
+  if (selectedRuns.size === 0) return;
+
+  if (!confirm(`Delete ${selectedRuns.size} selected runs? This cannot be undone.`)) return;
+
+  try {
+      const resp = await fetch('/api/runs/bulk/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        run_ids: [...selectedRuns]
+      })
+    });
+
+    if (!resp.ok) throw new Error('Failed to delete runs');
+    
+    selectedRuns.clear();
+    toggleBulkSelectionMode();
+    loadRuns();
+  } catch (e) {
+    alert(`Error deleting runs: ${e.message}`);
+  }
+});
+
+// Add bulk mode toggle to nav
+const navDiv = document.querySelector('.nav');
+const bulkToggleBtn = document.createElement('button');
+bulkToggleBtn.textContent = 'Toggle Bulk Mode';
+bulkToggleBtn.className = 'btn';
+bulkToggleBtn.style.cssText = 'padding: 4px 8px; font-size: 0.8rem; margin-left: auto;';
+bulkToggleBtn.addEventListener('click', toggleBulkSelectionMode);
+navDiv.appendChild(bulkToggleBtn);
+
+// Modify loadRuns to handle bulk selection mode
+const originalLoadRuns = loadRuns;
+loadRuns = async function() {
+  await originalLoadRuns();
+  
+  if (bulkSelectionMode) {
+    // Add checkboxes to new cards and restore selection state
+    contentEl.querySelectorAll('.thumb-card').forEach(card => {
+      addCheckboxToCard(card);
+      const checkbox = card.querySelector('.bulk-checkbox');
+      if (checkbox && selectedRuns.has(card.dataset.id)) {
+        checkbox.checked = true;
+      }
+    });
+  }
+};
 
 // Initial load
 (async () => {

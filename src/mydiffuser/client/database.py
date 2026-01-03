@@ -1,12 +1,12 @@
 """SQLite database for run metadata indexing."""
 
-import sqlite3
 import json
 import logging
+import sqlite3
 import subprocess
-from pathlib import Path
-from datetime import datetime, UTC, timedelta
 from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 
 from mydiffuser.utils.paths import list_all_runs, read_json
 
@@ -375,7 +375,7 @@ def index_run(run_id: str, meta: dict):
         ))
 
 
-def get_runs(run_type: str = 'all', include_tags: list[str] = None,
+def get_runs(run_type: str = 'all', include_tags: list[str] | None = None,
              show_nsfw: bool = False, page: int = 1, limit: int = 24) -> tuple[list[dict], int]:
     """Query runs from SQLite with filtering and pagination.
 
@@ -424,7 +424,7 @@ def get_runs(run_type: str = 'all', include_tags: list[str] = None,
             ORDER BY timestamp DESC
             LIMIT ? OFFSET ?
         '''
-        rows = conn.execute(query_sql, params + [limit, offset]).fetchall()
+        rows = conn.execute(query_sql, [*params, limit, offset]).fetchall()
 
         runs = []
         for row in rows:
@@ -460,7 +460,7 @@ def delete_run(run_id: str):
         conn.execute('DELETE FROM runs WHERE id = ?', (run_id,))
 
 
-def backfill_runs(force_refresh: bool = False, run_ids: list[str] = None) -> dict:
+def backfill_runs(force_refresh: bool = False, run_ids: list[str] | None = None) -> dict:
     """Backfill database with full parameters from meta.json files.
 
     Args:
@@ -529,7 +529,7 @@ def backfill_runs(force_refresh: bool = False, run_ids: list[str] = None) -> dic
         except Exception as e:
             logger.error(f"[{run_id}] Backfill failed: {e}")
             stats["errors"] += 1
-            stats["error_details"].append(f"{run_id}: {str(e)}")
+            stats["error_details"].append(f"{run_id}: {e!s}")
 
     logger.info(f"Backfill complete: {stats['updated']} runs updated, {stats['errors']} errors")
     return stats

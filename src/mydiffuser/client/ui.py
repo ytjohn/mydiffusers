@@ -923,7 +923,7 @@ def jobs_page(request: Request):
 # Legacy inline HTML job page (keeping for reference, can be deleted later)
 def _jobs_page_old() -> str:
     """OLD: Job queue monitoring page with inline HTML."""
-    return """<!DOCTYPE html>
+    return r"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">

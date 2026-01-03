@@ -177,6 +177,43 @@ The worker loads Qwen2-VL-2B lazily (~4GB VRAM) and can coexist with the image g
 - Assistant model: ~4GB
 - Image + Assistant together: ~34GB (fits in 96GB allocation)
 
+## Health Dashboard
+
+The Health Dashboard (`/health-dashboard`) provides real-time monitoring and control of worker GPU resources.
+
+### Features
+
+- **Real-time worker status**: See which workers are online/offline with auto-refresh every 3 seconds
+- **GPU memory monitoring**: Track GPU usage with visual memory bars showing used/free memory
+- **Queue status**: Monitor queued and running jobs per worker
+- **Active model tracking**: See which model was most recently used or loaded
+- **Models in memory**: View ALL models currently loaded in GPU memory (can be multiple)
+- **Model unloading**: Free GPU memory by unloading individual models (image, video, or assistant)
+- **Database backfill**: Populate missing parameters from meta.json files in run directories
+
+### Model Management
+
+Each loaded model in the "Models in Memory" section has an **Unload** button:
+
+- Click to free GPU memory without restarting the worker
+- Buttons are disabled while a job is running (models are locked)
+- After unloading, the model will be lazily reloaded on the next request
+- Useful for freeing memory when switching between model types or when models are idle
+
+**Tooltips explain the difference:**
+- **Active Model**: Which model was most recently used (single value, tracks lazy loading state)
+- **Models in Memory**: All models currently loaded in GPU (can be multiple, e.g., image + assistant = 34GB)
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/workers` | GET | List available workers |
+| `/api/workers/{id}/health` | GET | Get worker health (proxied to avoid CORS) |
+| `/api/workers/{id}/unload/{model_type}` | POST | Unload specific model (image/video/assistant) |
+| `/api/admin/backfill` | POST | Trigger database backfill |
+| `/api/admin/backfill/status` | GET | Check backfill status |
+
 ## Configuration
 
 ### Image Presets

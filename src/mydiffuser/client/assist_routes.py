@@ -6,12 +6,12 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile, File
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from PIL import Image
 
 from mydiffuser.client import database
-from mydiffuser.client.worker_client import WorkerClient
 from mydiffuser.client.config import list_workers
+from mydiffuser.client.worker_client import WorkerClient
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,6 @@ async def analyze_image(
 
     # Load image from one of the sources
     image = None
-    image_path_str = None
 
     try:
         if run_id:
@@ -75,7 +74,7 @@ async def analyze_image(
                     status_code=404,
                     detail=f"No image found in {run_path}"
                 )
-            image_path_str = str(image_files[0])
+            str(image_files[0])
             image = Image.open(image_files[0])
 
         elif image_path:
@@ -86,20 +85,17 @@ async def analyze_image(
                     status_code=404,
                     detail=f"Image not found: {image_path}"
                 )
-            image_path_str = image_path
             image = Image.open(image_path_obj)
 
         elif image_base64:
             # Decode base64
             image_data = base64.b64decode(image_base64)
             image = Image.open(BytesIO(image_data))
-            image_path_str = None  # No persistent path
 
         elif image_file:
             # Load from uploaded file
             contents = await image_file.read()
             image = Image.open(BytesIO(contents))
-            image_path_str = None  # No persistent path
 
         else:
             raise HTTPException(
@@ -109,7 +105,7 @@ async def analyze_image(
 
     except Exception as e:
         logger.error(f"Failed to load image: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to load image: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to load image: {e}") from e
 
     # Get first available worker
     workers = list_workers()
@@ -136,7 +132,7 @@ async def analyze_image(
         raise HTTPException(
             status_code=500,
             detail=f"Worker analysis failed: {e}"
-        )
+        ) from e
 
     # Store turn in database
     try:
@@ -152,7 +148,7 @@ async def analyze_image(
         )
     except Exception as e:
         logger.error(f"Failed to store turn: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to store turn: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to store turn: {e}") from e
 
     # Return response with session info
     return {
@@ -184,7 +180,7 @@ async def list_sessions(
         return {"sessions": sessions}
     except Exception as e:
         logger.error(f"Failed to list sessions: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {e}") from e
 
 
 @router.get("/sessions/{session_id}")
@@ -234,4 +230,4 @@ async def resolve_session(
         return {"status": "ok", "message": "Session resolved"}
     except Exception as e:
         logger.error(f"Failed to resolve session: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to resolve session: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to resolve session: {e}") from e

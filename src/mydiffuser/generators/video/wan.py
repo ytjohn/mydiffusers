@@ -201,9 +201,13 @@ class WanVideoGenerator(BaseVideoGenerator):
         run_id: str = "",
         callback_on_step_end = None,
         resolution: str = "480p",
-    ) -> tuple[Path, float, int]:
+    ) -> tuple[Path, float, int, dict[str, float], dict[str, float]]:
         self.ensure_loaded()
         check_shutdown()
+
+        # Reset GPU memory stats to get accurate peak usage for this generation
+        if DEVICE == "cuda" and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
 
         assert self._pipe is not None, "Pipeline not loaded"
 
@@ -247,7 +251,7 @@ class WanVideoGenerator(BaseVideoGenerator):
             if callback_on_step_end is not None:
                 def _combined_callback(pipe, step_index, timestep, callback_kwargs):
                     # Run shutdown check first
-                    shutdown_result = _shutdown_callback(pipe, step_index, timestep, callback_kwargs)
+                    _shutdown_callback(pipe, step_index, timestep, callback_kwargs)
                     # Then run custom callback
                     custom_result = callback_on_step_end(pipe, step_index, timestep, callback_kwargs)
                     return custom_result
@@ -398,13 +402,38 @@ class WanVideoGenerator(BaseVideoGenerator):
             self._save_video(frames, output_path, fps, log_prefix)
 
             elapsed2 = time.perf_counter() - start_time
+            encode_elapsed = elapsed2 - elapsed  # encode time = total - (infer + decode)
             logger.info("%sSaved video; total complete in %.2fs", log_prefix, elapsed2)
 
             # Cleanup intermediate tensors and CUDA cache to prevent OOM on next run
             del latents, decoded, frames
             self._cleanup_gpu_memory(log_prefix)
 
-            return output_path, elapsed2, num_frames
+            # Capture actual VRAM usage
+            vram_data = {}
+            if DEVICE == "cuda" and torch.cuda.is_available():
+                vram_allocated = torch.cuda.max_memory_allocated() / (1024**3)  # GiB
+                vram_reserved = torch.cuda.max_memory_reserved() / (1024**3)    # GiB
+                vram_data = {
+                    "allocated": vram_allocated,
+                    "reserved": vram_reserved,
+                }
+                logger.info(
+                    "%sVRAM usage: %.2f GiB allocated, %.2f GiB reserved",
+                    log_prefix,
+                    vram_allocated,
+                    vram_reserved,
+                )
+
+            # Build timing breakdown
+            timing_breakdown = {
+                "inference": infer_elapsed,
+                "decode": decode_elapsed,
+                "encode": encode_elapsed,
+                "total": elapsed2,
+            }
+
+            return output_path, elapsed2, num_frames, vram_data, timing_breakdown
 
         except InterruptedError:
             elapsed = time.perf_counter() - start_time

@@ -14,6 +14,6 @@ __all__ = [
     "ensure_video_generator",
     "get_active_model",
     "image_generator",
-    "video_generator",
     "infer_lock",
+    "video_generator",
 ]

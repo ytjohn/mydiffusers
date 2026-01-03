@@ -1,15 +1,16 @@
 """Client API routes for job submission and status."""
 
+import io
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile, File
-from PIL import Image
-import io
 import httpx
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from PIL import Image
 
 from mydiffuser.client import jobs
-from mydiffuser.client.config import list_workers, WORKERS
+from mydiffuser.client.config import WORKERS, list_workers
+from mydiffuser.client.estimate import job_estimator
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,11 @@ async def get_worker_health(worker_name: str):
 
     except httpx.TimeoutException:
         logger.warning(f"Worker {worker_name} health check timed out")
-        raise HTTPException(status_code=504, detail="Worker health check timed out")
+        raise HTTPException(status_code=504, detail="Worker health check timed out") from None
 
     except httpx.HTTPError as e:
         logger.error(f"Worker {worker_name} health check failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Worker unreachable: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Worker unreachable: {e!s}") from e
 
 
 @router.get("/workers/{worker_name}/capabilities")
@@ -87,16 +88,16 @@ async def get_worker_capabilities(worker_name: str):
         raise HTTPException(
             status_code=503,
             detail=f"Worker {worker_name} is unreachable: {e}",
-        )
+        ) from e
 
 
 @router.post("/workers/{worker_name}/unload/{model_type}")
 async def unload_worker_model(worker_name: str, model_type: str):
-    """Unload a specific model from a worker (proxied to worker).
+    """Unload a specific model from a worker.
 
     Args:
-        worker_name: Worker identifier (e.g., "local", "remote")
-        model_type: Type of model to unload ("image", "video", "assistant")
+        worker_name: Worker identifier
+        model_type: Type of model to unload ("image", "video", or "assistant")
 
     Returns:
         Status dict with memory info
@@ -118,9 +119,50 @@ async def unload_worker_model(worker_name: str, model_type: str):
         # Try to extract error detail from response
         try:
             error_detail = e.response.json().get("detail", str(e))
-        except:
+        except Exception:
             error_detail = str(e)
-        raise HTTPException(status_code=502, detail=error_detail)
+        raise HTTPException(status_code=502, detail=error_detail) from e
+
+
+@router.post("/estimate")
+async def estimate_job_resources(request: dict):
+    """Calculate VRAM and time estimates for job parameters.
+
+    Args:
+        request: Dictionary containing job type, model_id, parameters, and worker_id
+
+    Returns:
+        Detailed resource estimates including VRAM usage and time predictions
+    """
+    try:
+        job_type = request["type"]
+        model_id = request["model_id"]
+        parameters = request["parameters"]
+        worker_id = request["worker_id"]
+
+        if worker_id not in WORKERS:
+            raise HTTPException(
+                status_code=404, detail=f"Worker '{worker_id}' not found"
+            )
+
+        # Use our client estimator
+        estimate = job_estimator.estimate_job(job_type, model_id, parameters, worker_id)
+
+        return {
+            "vram_total_needed": estimate.vram_total_needed,
+            "vram_inference_only": estimate.vram_inference_only,
+            "vram_model_base": estimate.vram_model_base,
+            "model_loaded": estimate.model_loaded,
+            "time_estimate_seconds": estimate.time_estimate_seconds,
+            "worker_available": estimate.worker_available,
+            "recommendations": estimate.recommendations,
+        }
+
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Missing required field: {e}") from e
+    except Exception as e:
+        logger.error(f"Estimation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/jobs/image")
@@ -157,6 +199,7 @@ async def submit_image_job(
 
     # Parse tags from JSON string
     import json
+
     try:
         tags_list = json.loads(tags)
     except json.JSONDecodeError:
@@ -183,7 +226,7 @@ async def submit_image_job(
 
     except Exception as e:
         logger.exception(f"Failed to submit image job: {e}")
-        raise HTTPException(status_code=500, detail=f"Job submission failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Job submission failed: {e}") from e
 
 
 @router.post("/jobs/video")
@@ -229,6 +272,7 @@ async def submit_video_job(
     if source_run_id and source_run_id.strip():
         # Load image from run ID
         from mydiffuser.utils.paths import run_dir
+
         run_path = run_dir(source_run_id.strip())
         image_path = run_path / "output.png"
         if not image_path.exists():
@@ -241,7 +285,7 @@ async def submit_video_job(
             if source_image.mode != "RGB":
                 source_image = source_image.convert("RGB")
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid source image: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid source image: {e}") from e
     elif image:
         # Read and validate uploaded image
         try:
@@ -250,7 +294,7 @@ async def submit_video_job(
             if source_image.mode != "RGB":
                 source_image = source_image.convert("RGB")
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid image: {e}") from e
     else:
         raise HTTPException(
             status_code=400,
@@ -259,6 +303,7 @@ async def submit_video_job(
 
     # Parse tags from JSON string
     import json
+
     try:
         tags_list = json.loads(tags)
     except json.JSONDecodeError:
@@ -289,7 +334,7 @@ async def submit_video_job(
 
     except Exception as e:
         logger.exception(f"Failed to submit video job: {e}")
-        raise HTTPException(status_code=500, detail=f"Job submission failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Job submission failed: {e}") from e
 
 
 @router.get("/jobs")
@@ -311,7 +356,9 @@ async def list_jobs_endpoint():
                 "worker_run_id": job.worker_run_id,
                 "local_run_id": job.local_run_id,
                 "created_at": job.created_at.isoformat(),
-                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                "completed_at": job.completed_at.isoformat()
+                if job.completed_at
+                else None,
                 "error": job.error,
             }
             for job in job_list
@@ -383,8 +430,7 @@ async def cancel_job(job_id: str):
     # Can't cancel if already finished
     if job.status in ("complete", "failed", "cancelled"):
         raise HTTPException(
-            status_code=400,
-            detail=f"Cannot cancel job in state: {job.status}"
+            status_code=400, detail=f"Cannot cancel job in state: {job.status}"
         )
 
     # Forward cancellation request to worker
@@ -402,15 +448,10 @@ async def cancel_job(job_id: str):
         job.status = "cancelled"
         job.error = "Cancelled by user"
 
-        return {
-            "status": "success",
-            "job_id": job_id,
-            "worker_response": result
-        }
+        return {"status": "success", "job_id": job_id, "worker_response": result}
 
     except httpx.HTTPError as e:
         logger.error(f"[{job_id}] Failed to cancel job on worker: {e}")
         raise HTTPException(
-            status_code=502,
-            detail=f"Failed to communicate with worker: {str(e)}"
-        )
+            status_code=502, detail=f"Failed to communicate with worker: {e!s}"
+        ) from e

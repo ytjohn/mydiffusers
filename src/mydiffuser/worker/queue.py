@@ -5,8 +5,9 @@ Implements FIFO queue to process jobs one at a time.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Any
+from typing import Any
 
 from mydiffuser.worker import state
 
