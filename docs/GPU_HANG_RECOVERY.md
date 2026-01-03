@@ -160,6 +160,31 @@ bash scripts/restart-worker.sh
 # "GPU responsive, starting worker..."
 ```
 
+## Verified Test Cases
+
+### ✅ Video Generation Cancellation (2026-01-03)
+
+**Test:** Cancelled Wan 5B video job mid-generation at step 2/30
+
+**Results:**
+- GPU synchronization completed successfully after cancellation
+- Log confirmation: `Synchronizing GPU after cancellation... GPU synchronized successfully`
+- Models unloaded cleanly (95.1 GiB → 95.8 GiB free)
+- Worker restarted without hang
+- No D-state processes detected
+- Full GPU memory recovery verified
+
+**Key logs:**
+```
+INFO:mydiffuser.worker.jobs:[job_id] Cancellation detected at step 2/30
+INFO:mydiffuser.worker.jobs:[job_id] Synchronizing GPU after cancellation...
+INFO:mydiffuser.worker.jobs:[job_id] GPU synchronized successfully
+INFO:mydiffuser.inference.state:GPU memory after cleanup: 95.1 GiB free / 96.0 GiB total
+INFO:mydiffuser.worker.app:All models unloaded successfully
+```
+
+**Conclusion:** The `torch.cuda.synchronize()` fix successfully prevents GPU hangs during job cancellation. The GPU remained responsive and worker restarted cleanly without requiring a reboot.
+
 ## Monitoring
 
 ### Check GPU Health

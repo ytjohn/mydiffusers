@@ -231,10 +231,11 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ## Getting Help
 
-- **Architecture questions**: See `agents.md`
-- **Quick start**: See `QUICK_START.md`
-- **Lambda deployment**: See `LAMBDA_MANAGEMENT.md`
-- **Client/Worker status**: See `CLIENT_WORKER_STATUS.md`
+- **Architecture questions**: See `AGENTS.md`
+- **Quick start**: See `docs/QUICK_START.md`
+- **Lambda deployment**: See `docs/LAMBDA_MANAGEMENT.md`
+- **Client/Worker status**: See `docs/CLIENT_WORKER_STATUS.md`
+- **GPU hang recovery**: See `docs/GPU_HANG_RECOVERY.md`
 
 ## Summary Checklist
 
