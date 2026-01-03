@@ -65,12 +65,15 @@ def get_uvicorn_log_config():
 
 
 class SuppressStatusChecks(logging.Filter):
-    """Filter out frequent job status check logs from uvicorn access logs."""
+    """Filter out frequent job status check and health check logs from uvicorn access logs."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # Suppress GET requests to /jobs/{id}/status
         message = record.getMessage()
+        # Suppress GET requests to /jobs/{id}/status
         if "GET /jobs/" in message and "/status" in message:
+            return False
+        # Suppress GET requests to /health
+        if "GET /health" in message:
             return False
         return True
 
