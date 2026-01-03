@@ -30,10 +30,46 @@ os.environ["MYDIFFUSER_SKIP_GPU_DETECT"] = "1"
 # Configure logging before any imports
 logging.basicConfig(
     level=logging.INFO,
-    format="%(levelname)s:%(name)s:%(message)s",
+    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 logger = logging.getLogger(__name__)
+
+
+def get_uvicorn_log_config():
+    """Get uvicorn logging config with timestamps."""
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s %(levelname)s:%(name)s:%(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
+            "access": {
+                "format": "%(asctime)s %(levelname)s:%(name)s:%(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+            },
+            "access": {
+                "formatter": "access",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO"},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
 
 
 def main():
@@ -74,6 +110,7 @@ def main():
             host=args.host,
             port=args.port,
             log_level="info",
+            log_config=get_uvicorn_log_config(),
         )
     except KeyboardInterrupt:
         logger.info("\nShutdown requested, stopping client server...")

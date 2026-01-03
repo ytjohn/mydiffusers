@@ -44,7 +44,11 @@ def create_worker_app() -> FastAPI:
     @app.on_event("startup")
     async def startup():
         """Initialize worker (models load lazily on first request)."""
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
         logger.info("Worker starting up...")
 
         # Configure torch backends
