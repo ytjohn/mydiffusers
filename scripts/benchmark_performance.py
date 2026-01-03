@@ -6,16 +6,22 @@ Submits a grid of jobs with varying parameters to collect training data
 for improving time/VRAM prediction accuracy.
 
 Usage:
-    # Run image benchmarks only (default)
+    # Image benchmarks only (default, memory-safe)
     python scripts/benchmark_performance.py
+
+    # Explicit images-only
+    python scripts/benchmark_performance.py --images-only
+
+    # Video benchmarks only (run separately for memory safety)
+    python scripts/benchmark_performance.py --videos-only
+
+    # Both in one run (may cause memory pressure in lazy mode)
+    python scripts/benchmark_performance.py --test-videos
 
     # Test with small batch
     python scripts/benchmark_performance.py --batch-size 6
 
-    # Include video benchmarks (slow!)
-    python scripts/benchmark_performance.py --test-videos
-
-    # Quick test mode
+    # Quick test mode (6 image samples)
     python scripts/benchmark_performance.py --quick
 """
 
@@ -46,7 +52,7 @@ class BenchmarkConfig:
 
     # Image parameters
     image_resolutions: list[tuple[int, int]] = field(
-        default_factory=lambda: [(832, 480), (1280, 704), (1920, 1080)]
+        default_factory=lambda: [(832, 480), (1280, 704), (1920, 1088)]
     )
     image_guidance_scales: list[float] = field(default_factory=lambda: [0.3, 3.0, 8.0])
     image_step_counts: list[int] = field(default_factory=lambda: [3, 6, 10, 20])
@@ -80,8 +86,26 @@ class PerformanceBenchmark:
         self.completed_count = 0
         self.total_count = 0
 
+        # Validate configuration
+        self._validate_config()
+
         # Create output directory
         self.config.output_dir.mkdir(exist_ok=True)
+
+    def _validate_config(self):
+        """Validate configuration parameters"""
+        # Check image resolutions (height must be divisible by 16)
+        for width, height in self.config.image_resolutions:
+            if height % 16 != 0:
+                msg = f"Image resolution {width}x{height}: height must be divisible by 16"
+                raise ValueError(msg)
+
+        # Check video resolutions (height must be divisible by 16)
+        if self.config.test_videos:
+            for width, height in self.config.video_resolutions:
+                if height % 16 != 0:
+                    msg = f"Video resolution {width}x{height}: height must be divisible by 16"
+                    raise ValueError(msg)
 
     async def check_worker_health(self) -> bool:
         """Verify worker is online before starting"""
@@ -96,6 +120,84 @@ class PerformanceBenchmark:
         except Exception as e:
             print(f"❌ Worker health check failed: {e}")
             return False
+
+    async def check_for_active_jobs(self) -> tuple[bool, int]:
+        """Check if worker has active jobs (running or queued)
+
+        Returns:
+            (has_jobs, queued_count): True if jobs exist, and count of queued jobs
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.config.client_url}/api/workers/{self.config.worker_name}/health"
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                queued = data.get("queued_jobs", 0)
+                running = data.get("running_job")
+
+                has_jobs = queued > 0 or running is not None
+                return has_jobs, queued
+        except Exception as e:
+            print(f"⚠ Could not check for active jobs: {e}")
+            return False, 0
+
+    async def get_image_estimate(
+        self, width: int, height: int, steps: int, guidance: float
+    ) -> float:
+        """Get time estimate for image job from API"""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{self.config.client_url}/api/estimate",
+                    json={
+                        "type": "image",
+                        "model_id": "Tongyi-MAI/Z-Image-Turbo",
+                        "parameters": {
+                            "width": width,
+                            "height": height,
+                            "num_inference_steps": steps,
+                            "guidance_scale": guidance,
+                        },
+                        "worker_id": self.config.worker_name,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data.get("time_estimate_seconds", 300.0)
+        except Exception as e:
+            print(f"⚠ Estimate failed: {e}, using fallback")
+            return 300.0  # Fallback to 5 minutes
+
+    async def get_video_estimate(
+        self, width: int, height: int, duration: int, steps: int
+    ) -> float:
+        """Get time estimate for video job from API"""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{self.config.client_url}/api/estimate",
+                    json={
+                        "type": "video",
+                        "model_id": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+                        "parameters": {
+                            "width": width,
+                            "height": height,
+                            "duration_seconds": duration,
+                            "num_inference_steps": steps,
+                            "fps": 12,
+                        },
+                        "worker_id": self.config.worker_name,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data.get("time_estimate_seconds", 600.0)
+        except Exception as e:
+            print(f"⚠ Estimate failed: {e}, using fallback")
+            return 600.0  # Fallback to 10 minutes
 
     async def submit_image_job(
         self, width: int, height: int, steps: int, guidance: float
@@ -223,8 +325,67 @@ class PerformanceBenchmark:
             print(f"⚠ Database query failed: {e}")
             return None
 
+    async def warmup_image_model(self):
+        """Check if image model is loaded, warmup if needed"""
+        print("🔥 Checking image model...", end=" ", flush=True)
+
+        # Check if model is already loaded
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.config.client_url}/api/workers/{self.config.worker_name}/health"
+                )
+                health = response.json()
+                if health.get("models_loaded", {}).get("image"):
+                    print("✓ (already loaded)")
+                    return
+        except Exception:
+            pass  # If health check fails, proceed with warmup
+
+        # Model not loaded, submit minimal warmup job
+        print("loading...", end=" ", flush=True)
+        try:
+            # Submit smallest possible job (480p, 1 step for fastest load)
+            job_id = await self.submit_image_job(832, 480, 1, 0.3)
+            await self.poll_job_completion(job_id, silent=True)
+            print("✓")
+        except Exception as e:
+            # Model may have loaded even if we got an error
+            print(f"⚠ (error: {type(e).__name__})")
+
+    async def warmup_video_model(self):
+        """Check if video model is loaded, warmup if needed"""
+        print("🔥 Checking video model...", end=" ", flush=True)
+
+        # Check if model is already loaded
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.config.client_url}/api/workers/{self.config.worker_name}/health"
+                )
+                health = response.json()
+                if health.get("models_loaded", {}).get("video"):
+                    print("✓ (already loaded)")
+                    return
+        except Exception:
+            pass  # If health check fails, proceed with warmup
+
+        # Model not loaded, submit minimal warmup job
+        print("loading...", end=" ", flush=True)
+        try:
+            # Submit smallest possible video job (480p, 3s, 15 steps)
+            job_id = await self.submit_video_job(832, 480, 3, 15)
+            await self.poll_job_completion(job_id, silent=True)
+            print("✓")
+        except Exception as e:
+            # Model may have loaded even if we got an error
+            print(f"⚠ (error: {type(e).__name__})")
+
     async def run_image_benchmarks(self):
         """Run image generation benchmark grid"""
+        # Warmup model first
+        await self.warmup_image_model()
+
         print("🖼️  Running image benchmarks...")
 
         # Calculate total
@@ -249,40 +410,49 @@ class PerformanceBenchmark:
             )
 
             try:
+                # Get estimate BEFORE submitting job (to track prediction accuracy)
+                estimated_time = await self.get_image_estimate(width, height, steps, guidance)
+                print(f"(est: {estimated_time:.1f}s)", end=" ", flush=True)
+
                 # Submit job
                 job_id = await self.submit_image_job(width, height, steps, guidance)
 
                 # Wait for completion
                 result = await self.poll_job_completion(job_id)
-                run_id = result["run_id"]
+                run_id = result.get("run_id")
+
+                if not run_id:
+                    raise RuntimeError("No worker_run_id in response (model may not be loaded)")
 
                 # Query performance data
                 perf_data = self.query_job_performance(run_id)
 
                 if perf_data:
                     actual_time = perf_data.get("seconds_elapsed", 0)
-                    predicted_time = perf_data.get("time_predicted_seconds", 0)
+                    # Use our pre-submission estimate, not the database value
+                    predicted_time = estimated_time
                     time_per_step = actual_time / steps if steps > 0 else 0
+                    error_pct = ((actual_time - predicted_time) / predicted_time * 100) if predicted_time > 0 else 0
 
                     print(
-                        f" ✓ {actual_time:.1f}s (predicted: {predicted_time:.1f}s, {time_per_step:.2f}s/step)"
+                        f" ✓ {actual_time:.1f}s ({error_pct:+.0f}%, {time_per_step:.2f}s/step)"
                     )
 
-                    # Store result
-                    self.results.append(
-                        {
-                            "type": "image",
-                            "job_id": job_id,
-                            "run_id": run_id,
-                            "width": width,
-                            "height": height,
-                            "steps": steps,
-                            "guidance": guidance,
-                            **perf_data,
-                            "time_per_step": time_per_step,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                    )
+                    # Store result with our explicit estimate (override database value)
+                    result_data = {
+                        "type": "image",
+                        "job_id": job_id,
+                        "run_id": run_id,
+                        "width": width,
+                        "height": height,
+                        "steps": steps,
+                        "guidance": guidance,
+                        **perf_data,
+                        "time_predicted_seconds": predicted_time,  # Override with our pre-submission estimate
+                        "time_per_step": time_per_step,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    self.results.append(result_data)
                     self.completed_count += 1
 
                     # Save incremental results
@@ -296,7 +466,11 @@ class PerformanceBenchmark:
 
     async def run_video_benchmarks(self):
         """Run video generation benchmark grid"""
-        print("\n\n🎬 Running video benchmarks...")
+        # Warmup model first
+        print()
+        await self.warmup_video_model()
+
+        print("🎬 Running video benchmarks...")
 
         # Calculate total
         combinations = []
@@ -320,6 +494,10 @@ class PerformanceBenchmark:
             )
 
             try:
+                # Get estimate BEFORE submitting job (to track prediction accuracy)
+                estimated_time = await self.get_video_estimate(width, height, duration, steps)
+                print(f"(est: {estimated_time:.1f}s)", end=" ", flush=True)
+
                 # Submit job
                 job_id = await self.submit_video_job(width, height, duration, steps)
 
@@ -332,28 +510,30 @@ class PerformanceBenchmark:
 
                 if perf_data:
                     actual_time = perf_data.get("seconds_elapsed", 0)
-                    predicted_time = perf_data.get("time_predicted_seconds", 0)
+                    # Use our pre-submission estimate, not the database value
+                    predicted_time = estimated_time
                     time_per_step = actual_time / steps if steps > 0 else 0
+                    error_pct = ((actual_time - predicted_time) / predicted_time * 100) if predicted_time > 0 else 0
 
                     print(
-                        f" ✓ {actual_time:.1f}s (predicted: {predicted_time:.1f}s, {time_per_step:.2f}s/step)"
+                        f" ✓ {actual_time:.1f}s ({error_pct:+.0f}%, {time_per_step:.2f}s/step)"
                     )
 
-                    # Store result
-                    self.results.append(
-                        {
-                            "type": "video",
-                            "job_id": job_id,
-                            "run_id": run_id,
-                            "width": width,
-                            "height": height,
-                            "duration": duration,
-                            "steps": steps,
-                            **perf_data,
-                            "time_per_step": time_per_step,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                    )
+                    # Store result with our explicit estimate (override database value)
+                    result_data = {
+                        "type": "video",
+                        "job_id": job_id,
+                        "run_id": run_id,
+                        "width": width,
+                        "height": height,
+                        "duration": duration,
+                        "steps": steps,
+                        **perf_data,
+                        "time_predicted_seconds": predicted_time,  # Override with our pre-submission estimate
+                        "time_per_step": time_per_step,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    self.results.append(result_data)
                     self.completed_count += 1
 
                     # Save incremental results
@@ -541,11 +721,25 @@ async def main():
         type=int,
         help="Limit number of samples (for testing)",
     )
-    parser.add_argument(
+
+    # Test selection (mutually exclusive)
+    test_group = parser.add_mutually_exclusive_group()
+    test_group.add_argument(
+        "--images-only",
+        action="store_true",
+        help="Run only image benchmarks",
+    )
+    test_group.add_argument(
+        "--videos-only",
+        action="store_true",
+        help="Run only video benchmarks",
+    )
+    test_group.add_argument(
         "--test-videos",
         action="store_true",
-        help="Include video benchmarks (slow!)",
+        help="Run both image and video benchmarks (may cause memory pressure)",
     )
+
     parser.add_argument(
         "--quick",
         action="store_true",
@@ -556,14 +750,24 @@ async def main():
     # Configure
     config = BenchmarkConfig()
 
+    # Handle test selection
+    if args.images_only:
+        config.test_images = True
+        config.test_videos = False
+    elif args.videos_only:
+        config.test_images = False
+        config.test_videos = True
+    elif args.test_videos:
+        config.test_images = True
+        config.test_videos = True
+    # else: default is images only (test_images=True, test_videos=False)
+
+    # Handle batch size and quick mode
     if args.quick:
         config.batch_size = 6
-        config.test_videos = False
+        config.test_videos = False  # Quick mode is images only
     elif args.batch_size:
         config.batch_size = args.batch_size
-
-    if args.test_videos:
-        config.test_videos = True
 
     # Run benchmark
     benchmark = PerformanceBenchmark(config)
@@ -585,6 +789,14 @@ async def main():
         print("\n❌ Worker not available. Start the worker and try again.")
         return 1
     print("✓")
+
+    # Check for active jobs (benchmark needs exclusive access)
+    has_jobs, queued = await benchmark.check_for_active_jobs()
+    if has_jobs:
+        print("\n❌ Worker has active jobs (running or queued)")
+        print("   Benchmarks need exclusive worker access for accurate timing.")
+        print("   Please wait for jobs to complete or cancel them, then retry.")
+        return 1
 
     try:
         # Run benchmarks
