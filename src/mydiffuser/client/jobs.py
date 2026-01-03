@@ -331,6 +331,23 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
                         logger.warning(f"Failed to record performance data: {e}")
 
                     database.index_run(job.worker_run_id, meta)
+
+                    # Trigger background training if enough new data available
+                    try:
+                        from mydiffuser.client.performance_estimator import (
+                            performance_estimator,
+                        )
+                        from mydiffuser.config import GPU_ARCH
+
+                        model_id = meta.get("params", {}).get("model_id")
+                        gen_type = meta.get("type")
+                        if model_id and gen_type and GPU_ARCH:
+                            performance_estimator.check_and_train_if_needed(
+                                model_id, GPU_ARCH, gen_type
+                            )
+                    except Exception as e:
+                        logger.debug(f"Background training check failed: {e}")
+
                 except Exception as e:
                     logger.warning(f"Failed to index run {job.worker_run_id}: {e}")
             return run_dir(job.worker_run_id)

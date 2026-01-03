@@ -2,12 +2,16 @@
 Client-side VRAM and time estimation service.
 
 Provides accurate resource estimates for job parameters based on
-actual measurements and model loading state.
+actual measurements and model loading state. Uses data-driven predictions
+when available, falls back to hardcoded estimates otherwise.
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Any, ClassVar
+
+from mydiffuser.client.performance_estimator import performance_estimator
+from mydiffuser.config import GPU_ARCH
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +69,10 @@ class JobEstimator:
     def estimate_image_job(
         self, model_id: str, parameters: dict[str, Any], worker_id: str
     ) -> JobEstimate:
-        """Estimate VRAM and time for image job"""
+        """Estimate VRAM and time for image job.
+
+        Uses data-driven predictions when available, falls back to hardcoded estimates.
+        """
         model_loaded = self.check_model_loaded(worker_id, model_id)
 
         # Extract parameters
@@ -74,28 +81,48 @@ class JobEstimator:
         steps = parameters.get("num_inference_steps", 4)
         guidance = parameters.get("guidance_scale", 0.3)
 
-        # Base VRAM from your actual measurements (19.3GB for 1920x1080)
-        base_vram = 19.3
-        base_pixels = 1920 * 1080
-        current_pixels = width * height
+        # Try data-driven prediction first
+        prediction = performance_estimator.predict(
+            model_id=model_id,
+            gpu_arch=GPU_ARCH,
+            generation_type="image",
+            width=width,
+            height=height,
+            steps=steps,
+        )
 
-        # Sublinear scaling based on your measurements
-        scaling_factor = (current_pixels / base_pixels) ** 0.8
-        vram_total = base_vram * scaling_factor
+        if prediction:
+            vram_total, time_estimate = prediction
+            logger.debug(
+                f"Using learned model for {model_id}: "
+                f"VRAM={vram_total:.1f}GB, time={time_estimate:.1f}s"
+            )
+        else:
+            # Fallback to hardcoded estimates
+            logger.debug(f"Using hardcoded estimates for {model_id} (insufficient training data)")
 
-        # Calculate time based on actual measurements
-        base_pixels = 832 * 480
-        current_pixels = width * height
+            # Base VRAM from your actual measurements (19.3GB for 1920x1080)
+            base_vram = 19.3
+            base_pixels = 1920 * 1080
+            current_pixels = width * height
 
-        # Time scaling based on your actual data
-        base_time = 7.4  # 832x480@4steps actual measurement
-        resolution_factor = (current_pixels / base_pixels) ** 0.85  # Sublinear scaling
-        steps_factor = steps / 4.0
-        guidance_factor = (
-            1.0 + (max(guidance - 0.3, 0) / 7.7) * 1.5
-        )  # 0.3→8.0 increases time by ~50%
+            # Sublinear scaling based on your measurements
+            scaling_factor = (current_pixels / base_pixels) ** 0.8
+            vram_total = base_vram * scaling_factor
 
-        time_estimate = base_time * resolution_factor * steps_factor * guidance_factor
+            # Calculate time based on actual measurements
+            base_pixels = 832 * 480
+            current_pixels = width * height
+
+            # Time scaling based on your actual data
+            base_time = 7.4  # 832x480@4steps actual measurement
+            resolution_factor = (current_pixels / base_pixels) ** 0.85  # Sublinear scaling
+            steps_factor = steps / 4.0
+            guidance_factor = (
+                1.0 + (max(guidance - 0.3, 0) / 7.7) * 1.5
+            )  # 0.3→8.0 increases time by ~50%
+
+            time_estimate = base_time * resolution_factor * steps_factor * guidance_factor
 
         return JobEstimate(
             vram_total_needed=vram_total,
@@ -110,7 +137,10 @@ class JobEstimator:
     def estimate_video_job(
         self, model_id: str, parameters: dict[str, Any], worker_id: str
     ) -> JobEstimate:
-        """Estimate VRAM and time for video job"""
+        """Estimate VRAM and time for video job.
+
+        Uses data-driven predictions when available, falls back to hardcoded estimates.
+        """
         model_loaded = self.check_model_loaded(worker_id, model_id)
 
         # Extract parameters
@@ -119,29 +149,50 @@ class JobEstimator:
         frames = parameters.get("num_frames", 36)
         steps = parameters.get("num_inference_steps", 15)
 
-        # Base VRAM from your actual measurements (11.7GB for 1280x704@36frames@15steps)
-        base_vram = 11.7
-        base_pixels = 1280 * 704
-        current_pixels = width * height
+        # Try data-driven prediction first
+        prediction = performance_estimator.predict(
+            model_id=model_id,
+            gpu_arch=GPU_ARCH,
+            generation_type="video",
+            width=width,
+            height=height,
+            steps=steps,
+            frames=frames,
+        )
 
-        # Sublinear scaling based on your measurements
-        scaling_factor = (current_pixels / base_pixels) ** 0.85
-        vram_total = base_vram * scaling_factor
+        if prediction:
+            vram_total, time_estimate = prediction
+            logger.debug(
+                f"Using learned model for {model_id}: "
+                f"VRAM={vram_total:.1f}GB, time={time_estimate:.1f}s"
+            )
+        else:
+            # Fallback to hardcoded estimates
+            logger.debug(f"Using hardcoded estimates for {model_id} (insufficient training data)")
 
-        # Calculate time based on actual measurements
-        base_pixels = 1280 * 704
-        base_frames = 36
-        base_steps = 15
+            # Base VRAM from your actual measurements (11.7GB for 1280x704@36frames@15steps)
+            base_vram = 11.7
+            base_pixels = 1280 * 704
+            current_pixels = width * height
 
-        current_pixels = width * height
+            # Sublinear scaling based on your measurements
+            scaling_factor = (current_pixels / base_pixels) ** 0.85
+            vram_total = base_vram * scaling_factor
 
-        # Time scaling based on your actual data (2132s for 1280x704@36frames@15steps)
-        base_time = 2132.0  # Your actual measurement in seconds
-        resolution_factor = (current_pixels / base_pixels) ** 0.9  # Sublinear scaling
-        frames_factor = frames / base_frames
-        steps_factor = steps / base_steps
+            # Calculate time based on actual measurements
+            base_pixels = 1280 * 704
+            base_frames = 36
+            base_steps = 15
 
-        time_estimate = base_time * resolution_factor * frames_factor * steps_factor
+            current_pixels = width * height
+
+            # Time scaling based on your actual data (2132s for 1280x704@36frames@15steps)
+            base_time = 2132.0  # Your actual measurement in seconds
+            resolution_factor = (current_pixels / base_pixels) ** 0.9  # Sublinear scaling
+            frames_factor = frames / base_frames
+            steps_factor = steps / base_steps
+
+            time_estimate = base_time * resolution_factor * frames_factor * steps_factor
 
         return JobEstimate(
             vram_total_needed=vram_total,
