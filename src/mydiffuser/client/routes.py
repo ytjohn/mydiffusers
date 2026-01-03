@@ -124,6 +124,37 @@ async def unload_worker_model(worker_name: str, model_type: str):
         raise HTTPException(status_code=502, detail=error_detail) from e
 
 
+async def get_worker_gpu_arch(worker_id: str) -> str:
+    """Get GPU architecture for a specific worker.
+
+    Args:
+        worker_id: Worker identifier
+
+    Returns:
+        GPU architecture string (e.g., "gfx1151", "sm_86")
+        Returns "unknown" if worker unreachable or GPU info unavailable
+    """
+    if worker_id not in WORKERS:
+        logger.warning(f"Worker '{worker_id}' not found in WORKERS config")
+        return "unknown"
+
+    worker_config = WORKERS[worker_id]
+    endpoint = worker_config["endpoint"]
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{endpoint}/health")
+            response.raise_for_status()
+            health_data = response.json()
+            gpu_arch = health_data.get("gpu_arch", "unknown")
+            logger.debug(f"Worker {worker_id} GPU architecture: {gpu_arch}")
+            return gpu_arch
+
+    except Exception as e:
+        logger.warning(f"Failed to get GPU architecture for worker {worker_id}: {e}")
+        return "unknown"
+
+
 @router.post("/estimate")
 async def estimate_job_resources(request: dict):
     """Calculate VRAM and time estimates for job parameters.
@@ -145,8 +176,13 @@ async def estimate_job_resources(request: dict):
                 status_code=404, detail=f"Worker '{worker_id}' not found"
             )
 
-        # Use our client estimator
-        estimate = job_estimator.estimate_job(job_type, model_id, parameters, worker_id)
+        # Get worker's GPU architecture for GPU-specific predictions
+        gpu_arch = await get_worker_gpu_arch(worker_id)
+
+        # Use our client estimator with worker-specific GPU info
+        estimate = job_estimator.estimate_job(
+            job_type, model_id, parameters, worker_id, gpu_arch
+        )
 
         return {
             "vram_total_needed": estimate.vram_total_needed,

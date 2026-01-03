@@ -102,6 +102,10 @@ function renderWorkerCards(workers) {
                         <span class="metric-value">${escapeHtml(h.gpu_name || 'Unknown')}</span>
                     </div>
                     <div class="metric-row">
+                        <span class="metric-label">Architecture</span>
+                        <span class="metric-value">${escapeHtml(h.gpu_arch || 'unknown')}</span>
+                    </div>
+                    <div class="metric-row">
                         <span class="metric-label">Memory</span>
                         <span class="metric-value">${memUsed.toFixed(1)} / ${memTotal.toFixed(1)} GB</span>
                     </div>

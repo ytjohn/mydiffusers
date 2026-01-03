@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from mydiffuser.client.performance_estimator import performance_estimator
-from mydiffuser.config import GPU_ARCH
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +66,17 @@ class JobEstimator:
             return "image"
 
     def estimate_image_job(
-        self, model_id: str, parameters: dict[str, Any], worker_id: str
+        self, model_id: str, parameters: dict[str, Any], worker_id: str, gpu_arch: str
     ) -> JobEstimate:
         """Estimate VRAM and time for image job.
 
         Uses data-driven predictions when available, falls back to hardcoded estimates.
+
+        Args:
+            model_id: Model identifier
+            parameters: Job parameters
+            worker_id: Worker identifier
+            gpu_arch: GPU architecture (e.g., "gfx1151")
         """
         model_loaded = self.check_model_loaded(worker_id, model_id)
 
@@ -81,10 +86,10 @@ class JobEstimator:
         steps = parameters.get("num_inference_steps", 4)
         guidance = parameters.get("guidance_scale", 0.3)
 
-        # Try data-driven prediction first
+        # Try data-driven prediction first using worker's GPU architecture
         prediction = performance_estimator.predict(
             model_id=model_id,
-            gpu_arch=GPU_ARCH,
+            gpu_arch=gpu_arch,
             generation_type="image",
             width=width,
             height=height,
@@ -135,11 +140,17 @@ class JobEstimator:
         )
 
     def estimate_video_job(
-        self, model_id: str, parameters: dict[str, Any], worker_id: str
+        self, model_id: str, parameters: dict[str, Any], worker_id: str, gpu_arch: str
     ) -> JobEstimate:
         """Estimate VRAM and time for video job.
 
         Uses data-driven predictions when available, falls back to hardcoded estimates.
+
+        Args:
+            model_id: Model identifier
+            parameters: Job parameters
+            worker_id: Worker identifier
+            gpu_arch: GPU architecture (e.g., "gfx1151")
         """
         model_loaded = self.check_model_loaded(worker_id, model_id)
 
@@ -149,10 +160,10 @@ class JobEstimator:
         frames = parameters.get("num_frames", 36)
         steps = parameters.get("num_inference_steps", 15)
 
-        # Try data-driven prediction first
+        # Try data-driven prediction first using worker's GPU architecture
         prediction = performance_estimator.predict(
             model_id=model_id,
-            gpu_arch=GPU_ARCH,
+            gpu_arch=gpu_arch,
             generation_type="video",
             width=width,
             height=height,
@@ -205,9 +216,16 @@ class JobEstimator:
         )
 
     def estimate_assistant_job(
-        self, model_id: str, parameters: dict[str, Any], worker_id: str
+        self, model_id: str, parameters: dict[str, Any], worker_id: str, gpu_arch: str
     ) -> JobEstimate:
-        """Estimate VRAM and time for assistant job"""
+        """Estimate VRAM and time for assistant job
+
+        Args:
+            model_id: Model identifier
+            parameters: Job parameters
+            worker_id: Worker identifier
+            gpu_arch: GPU architecture (e.g., "gfx1151")
+        """
         model_loaded = self.check_model_loaded(worker_id, model_id)
 
         # VRAM calculation - use actual measurements as base
@@ -237,15 +255,23 @@ class JobEstimator:
         )
 
     def estimate_job(
-        self, job_type: str, model_id: str, parameters: dict[str, Any], worker_id: str
+        self, job_type: str, model_id: str, parameters: dict[str, Any], worker_id: str, gpu_arch: str
     ) -> JobEstimate:
-        """Main estimation function"""
+        """Main estimation function
+
+        Args:
+            job_type: Type of job ("image", "video", "assistant")
+            model_id: Model identifier
+            parameters: Job parameters
+            worker_id: Worker identifier
+            gpu_arch: GPU architecture (e.g., "gfx1151")
+        """
         if job_type == "image":
-            return self.estimate_image_job(model_id, parameters, worker_id)
+            return self.estimate_image_job(model_id, parameters, worker_id, gpu_arch)
         elif job_type == "video":
-            return self.estimate_video_job(model_id, parameters, worker_id)
+            return self.estimate_video_job(model_id, parameters, worker_id, gpu_arch)
         elif job_type == "assistant":
-            return self.estimate_assistant_job(model_id, parameters, worker_id)
+            return self.estimate_assistant_job(model_id, parameters, worker_id, gpu_arch)
         else:
             raise ValueError(f"Unknown job type: {job_type}")
 
