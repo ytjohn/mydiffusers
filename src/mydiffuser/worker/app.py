@@ -6,25 +6,24 @@ import logging
 import shutil
 import tarfile
 import uuid
-from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 from PIL import Image
 
 from mydiffuser import __version__
 from mydiffuser.config import (
     DEVICE,
     PLATFORM,
-    PROJECT_ROOT,
     VIDEO_ENABLED,
-    VIDEO_MODELS,
     VIDEO_MODEL_SIZE,
+    VIDEO_MODELS,
     configure_torch_backends,
     get_available_video_models,
 )
 from mydiffuser.models.requests import GenerateImageRequest, GenerateVideoRequest
 from mydiffuser.utils.paths import worker_run_dir
+from mydiffuser.utils.vram_predictor import vram_predictor
 from mydiffuser.worker import jobs, state
 from mydiffuser.worker.queue import job_queue
 
@@ -65,6 +64,7 @@ def create_worker_app() -> FastAPI:
 
         # Unload any loaded models
         from mydiffuser.inference.state import _unload_all_models
+
         _unload_all_models()
 
         logger.info("Worker shutdown complete")
@@ -100,25 +100,51 @@ def create_worker_app() -> FastAPI:
         health_info["capabilities"].append("image")
         if VIDEO_ENABLED:
             health_info["capabilities"].append("video")
-            # Include available video models
-            health_info["video_models"] = get_available_video_models()
+        # Include available video models
+        health_info["video_models"] = get_available_video_models()
         health_info["capabilities"].append("assist")  # Prompt assistant
+
+        # Add VRAM prediction info
+        try:
+            vram_summary = vram_predictor.get_system_summary()
+            health_info["vram_prediction"] = {
+                "estimated_free_gb": round(
+                    vram_summary["current_status"]["free_gb"], 1
+                ),
+                "estimated_total_gb": round(
+                    vram_summary["current_status"]["total_gb"], 1
+                ),
+                "model_sizes": vram_summary["model_sizes"],
+            }
+        except Exception as e:
+            logger.warning(f"VRAM summary failed: {e}")
+            health_info["vram_prediction"] = {"error": str(e)}
 
         # Platform info
         health_info["platform"] = PLATFORM
 
         # Report currently loaded model (if any)
         from mydiffuser.inference.state import get_active_model
+
         active = get_active_model()
         if active:
             health_info["active_model"] = active
 
         # Report model loading status
         from mydiffuser.inference import state as inference_state
+
         health_info["models_loaded"] = {
-            "image": inference_state.image_generator is not None and inference_state.image_generator.is_loaded if inference_state.image_generator else False,
-            "video": inference_state.video_generator is not None and inference_state.video_generator.is_loaded if inference_state.video_generator else False,
-            "assistant": inference_state.prompt_assistant is not None if inference_state.prompt_assistant else False,
+            "image": inference_state.image_generator is not None
+            and inference_state.image_generator.is_loaded
+            if inference_state.image_generator
+            else False,
+            "video": inference_state.video_generator is not None
+            and inference_state.video_generator.is_loaded
+            if inference_state.video_generator
+            else False,
+            "assistant": inference_state.prompt_assistant is not None
+            if inference_state.prompt_assistant
+            else False,
         }
 
         return health_info
@@ -157,24 +183,24 @@ def create_worker_app() -> FastAPI:
         # Check if there's a running job
         if job_queue.get_current_job_id():
             raise HTTPException(
-                status_code=409,
-                detail="Cannot unload model while a job is running"
+                status_code=409, detail="Cannot unload model while a job is running"
             )
 
         # Validate model type
         if model_type not in ["image", "video", "assistant"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid model_type: {model_type}. Must be 'image', 'video', or 'assistant'"
+                detail=f"Invalid model_type: {model_type}. Must be 'image', 'video', or 'assistant'",
             )
 
         try:
             from mydiffuser.inference.state import unload_model
+
             result = unload_model(model_type)
             return result
         except Exception as e:
             logger.error(f"Failed to unload {model_type} model: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @app.post("/assist/analyze")
     async def analyze_image_for_prompt_improvement(
@@ -194,7 +220,6 @@ def create_worker_app() -> FastAPI:
         Returns:
             Dict with analysis, suggestions, and raw_response
         """
-        import base64
 
         async with infer_lock:
             try:
@@ -206,6 +231,7 @@ def create_worker_app() -> FastAPI:
 
                 # Lazy load assistant (will swap models if needed)
                 from mydiffuser.inference.state import ensure_prompt_assistant
+
                 assistant = ensure_prompt_assistant()
 
                 # Run analysis in executor to avoid blocking
@@ -214,21 +240,21 @@ def create_worker_app() -> FastAPI:
                         image=img,
                         current_prompt=current_prompt,
                         issue=user_message,
-                        max_new_tokens=max_new_tokens
+                        max_new_tokens=max_new_tokens,
                     )
 
                 result = await asyncio.get_event_loop().run_in_executor(None, analyze)
 
                 # Return the analysis
                 return {
-                    "analysis": result['analysis'],
-                    "suggestions": result['suggestions'],
-                    "raw_response": result['raw_response'],
+                    "analysis": result["analysis"],
+                    "suggestions": result["suggestions"],
+                    "raw_response": result["raw_response"],
                 }
 
             except Exception as e:
                 logger.exception(f"Assist analysis failed: {e}")
-                raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+                raise HTTPException(status_code=500, detail=f"Analysis failed: {e}") from e
 
     @app.get("/gpu/test")
     async def gpu_test():
@@ -242,6 +268,7 @@ def create_worker_app() -> FastAPI:
         Useful for validating remote worker deployments.
         """
         import time
+
         import torch
 
         if not torch.cuda.is_available():
@@ -328,7 +355,64 @@ def create_worker_app() -> FastAPI:
         try:
             request_data = json.loads(request_json)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}") from e
+
+        # VRAM compatibility check
+        try:
+            if type == "image":
+                from mydiffuser.utils.presets import apply_preset
+
+                request_obj = GenerateImageRequest(**request_data)
+                params = apply_preset(request_obj)
+
+                compatibility = vram_predictor.check_compatibility(
+                    "image",
+                    width=params["width"],
+                    height=params["height"],
+                    num_inference_steps=params["num_inference_steps"],
+                )
+
+            elif type == "video":
+                request_obj = GenerateVideoRequest(**request_data)
+                params = request_data  # Use raw params for video
+
+                # Calculate frames
+                fps = params.get("fps", 12)
+                duration = params.get("duration_seconds", 3)
+                num_frames = fps * duration
+
+                model_size = params.get("model_size", "5B")
+                width = 1280 if "720p" in str(params.get("resolution", "480p")) else 832
+                height = 704 if "720p" in str(params.get("resolution", "480p")) else 480
+
+                compatibility = vram_predictor.check_compatibility(
+                    "video",
+                    model_name="wan-2.1-5b" if model_size == "5B" else "wan-2.1-14b",
+                    width=width,
+                    height=height,
+                    num_frames=num_frames,
+                    num_inference_steps=params.get("num_inference_steps", 15),
+                )
+            else:
+                compatibility = {"compatible": True, "recommendations": []}
+
+        except Exception as e:
+            logger.warning(f"VRAM check failed: {e}")
+            compatibility = {"compatible": True, "recommendations": []}
+
+        if not compatibility["compatible"]:
+            logger.warning(
+                f"[{job_id}] Job rejected due to insufficient VRAM: {compatibility}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Insufficient VRAM",
+                    "needed_gb": round(compatibility["needed_gb"], 1),
+                    "available_gb": round(compatibility["free_gb"], 1),
+                    "recommendations": compatibility["recommendations"],
+                },
+            )
 
         # Add job to queue instead of spawning immediately
         if type == "image":
@@ -342,7 +426,9 @@ def create_worker_app() -> FastAPI:
 
         elif type == "video":
             if image is None:
-                raise HTTPException(status_code=400, detail="Video jobs require source image")
+                raise HTTPException(
+                    status_code=400, detail="Video jobs require source image"
+                )
 
             request = GenerateVideoRequest(**request_data)
 
@@ -384,6 +470,7 @@ def create_worker_app() -> FastAPI:
             try:
                 # Lazy load image generator (will swap models if needed)
                 from mydiffuser.inference.state import ensure_image_generator
+
                 gen = ensure_image_generator()
 
                 await asyncio.get_event_loop().run_in_executor(
@@ -410,6 +497,7 @@ def create_worker_app() -> FastAPI:
 
                 # Lazy load video generator (will swap models if needed)
                 from mydiffuser.inference.state import ensure_video_generator
+
                 gen = ensure_video_generator(model_id=model_id)
 
                 await asyncio.get_event_loop().run_in_executor(
@@ -442,20 +530,14 @@ def create_worker_app() -> FastAPI:
 
         # Sort by most recent first (using completed_at or started_at)
         all_jobs.sort(
-            key=lambda j: (
-                j.get("completed_at") or j.get("started_at") or ""
-            ),
-            reverse=True
+            key=lambda j: (j.get("completed_at") or j.get("started_at") or ""),
+            reverse=True,
         )
 
         # Return last 10 jobs
         recent_jobs = all_jobs[:10]
 
-        return {
-            "jobs": recent_jobs,
-            "count": len(recent_jobs),
-            "total": len(all_jobs)
-        }
+        return {"jobs": recent_jobs, "count": len(recent_jobs), "total": len(all_jobs)}
 
     @app.get("/jobs/{job_id}/status")
     async def get_job_status(job_id: str):
@@ -522,14 +604,13 @@ def create_worker_app() -> FastAPI:
 
         if not success:
             raise HTTPException(
-                status_code=400,
-                detail=f"Cannot cancel job in state: {progress.status}"
+                status_code=400, detail=f"Cannot cancel job in state: {progress.status}"
             )
 
         return {
             "status": "cancellation_requested",
             "job_id": job_id,
-            "message": "Job will be cancelled between diffusion steps"
+            "message": "Job will be cancelled between diffusion steps",
         }
 
     @app.delete("/jobs/{job_id}")
@@ -550,5 +631,71 @@ def create_worker_app() -> FastAPI:
         state.cleanup_job(job_id)
 
         return {"status": "deleted", "job_id": job_id}
+
+    @app.post("/shutdown")
+    async def shutdown_worker():
+        """Gracefully shutdown the worker by cancelling jobs and unloading models.
+
+        This endpoint is called by restart-worker.sh to ensure clean GPU cleanup
+        before the process is terminated. Prevents GPU from entering D-state.
+
+        Steps:
+        1. Cancel any currently running job
+        2. Unload all models to free GPU memory
+        3. Return success
+        4. Exit the process after a brief delay
+
+        Returns:
+            Dict with status and cleanup details
+        """
+        import os
+        import signal
+
+        logger.info("Shutdown requested via API")
+        result = {
+            "status": "ok",
+            "message": "Worker shutting down gracefully",
+            "cancelled_job": None,
+            "models_unloaded": False,
+        }
+
+        # Cancel any running job
+        current_job_id = job_queue.get_current_job_id()
+        if current_job_id:
+            logger.info(f"Cancelling running job: {current_job_id}")
+            success = state.request_cancellation(current_job_id)
+            if success:
+                result["cancelled_job"] = current_job_id
+                # Give the job a moment to register cancellation
+                await asyncio.sleep(0.5)
+            else:
+                logger.warning(f"Failed to cancel job {current_job_id}")
+        else:
+            logger.info("No running job to cancel")
+
+        # Unload all models to free GPU memory
+        try:
+            logger.info("Unloading all models...")
+            from mydiffuser.inference.state import unload_all_models
+
+            unload_result = unload_all_models()
+            result["models_unloaded"] = True
+            result["gpu_memory"] = unload_result.get("gpu_memory", {})
+            logger.info("All models unloaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to unload models: {e}")
+            result["models_unloaded"] = False
+            result["unload_error"] = str(e)
+
+        # Schedule process exit after returning response
+        async def delayed_exit():
+            await asyncio.sleep(0.5)  # Brief delay to ensure response is sent
+            logger.info("Exiting worker process (graceful shutdown)")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        asyncio.create_task(delayed_exit())
+
+        logger.info("Graceful shutdown complete - process will exit shortly")
+        return result
 
     return app
