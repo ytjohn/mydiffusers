@@ -685,6 +685,16 @@ def create_worker_app() -> FastAPI:
             result["models_unloaded"] = True
             result["gpu_memory"] = unload_result.get("gpu_memory", {})
             logger.info("All models unloaded successfully")
+
+            # Additional GPU synchronization after model unload
+            # Especially important after cancelled jobs
+            import torch
+            if torch.cuda.is_available():
+                logger.info("Synchronizing GPU after model unload...")
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                logger.info("GPU synchronized")
+
         except Exception as e:
             logger.error(f"Failed to unload models: {e}")
             result["models_unloaded"] = False
@@ -693,6 +703,9 @@ def create_worker_app() -> FastAPI:
         # Schedule process exit after returning response
         async def delayed_exit():
             await asyncio.sleep(0.5)  # Brief delay to ensure response is sent
+            # Additional delay to let ROCm driver complete cleanup
+            logger.info("Waiting for ROCm driver cleanup...")
+            await asyncio.sleep(2.0)
             logger.info("Exiting worker process (graceful shutdown)")
             os.kill(os.getpid(), signal.SIGTERM)
 

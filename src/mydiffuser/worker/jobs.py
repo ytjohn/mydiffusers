@@ -163,8 +163,21 @@ def execute_image_job(
         return rid, rd
 
     except InterruptedError:
-        # Job was cancelled by user
+        # Job was cancelled by user - ensure GPU operations complete
         logger.info(f"[{job_id}] Image generation cancelled")
+
+        # Critical: Synchronize GPU to ensure all kernels complete
+        # Cancelling mid-inference can leave GPU in bad state if not synced
+        try:
+            import torch
+            if torch.cuda.is_available():
+                logger.info(f"[{job_id}] Synchronizing GPU after cancellation...")
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                logger.info(f"[{job_id}] GPU synchronized successfully")
+        except Exception as e:
+            logger.warning(f"[{job_id}] GPU sync after cancellation failed: {e}")
+
         # State is already marked as cancelled by the callback
         raise
 
@@ -297,8 +310,21 @@ def execute_video_job(
         return rid, rd
 
     except InterruptedError:
-        # Job was cancelled by user
+        # Job was cancelled by user - ensure GPU operations complete
         logger.info(f"[{job_id}] Video generation cancelled")
+
+        # Critical: Synchronize GPU to ensure all kernels complete
+        # Cancelling mid-inference can leave GPU in bad state if not synced
+        try:
+            import torch
+            if torch.cuda.is_available():
+                logger.info(f"[{job_id}] Synchronizing GPU after cancellation...")
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                logger.info(f"[{job_id}] GPU synchronized successfully")
+        except Exception as e:
+            logger.warning(f"[{job_id}] GPU sync after cancellation failed: {e}")
+
         # State is already marked as cancelled by the callback
         raise
 

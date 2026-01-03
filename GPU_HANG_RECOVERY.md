@@ -8,7 +8,8 @@ AMD gfx1151 GPU can enter D-state (uninterruptible sleep) due to:
 - ROCm driver issues with conv3d operations
 - MIOpen kernel compilation failures
 - GPU memory not properly released between worker restarts
-- **NEW**: GPU detection code calling torch.cuda functions when GPU is already hung
+- **Cancelled jobs**: Interrupting diffusion inference mid-generation can leave GPU kernels in incomplete state
+- GPU detection code calling torch.cuda functions when GPU is already hung
 
 ## Immediate Recovery
 
@@ -42,6 +43,13 @@ sudo reboot
 - `restart-worker.sh` calls this endpoint BEFORE killing the process
 - Reduces GPU hangs by ensuring clean GPU resource cleanup
 - Falls back to SIGTERM → SIGKILL if API call fails
+- Includes explicit GPU synchronization and 2s delay for ROCm driver cleanup
+
+**1a. Job Cancellation GPU Synchronization** ⭐ NEW (2026-01-03)
+- When job is cancelled mid-generation, explicitly calls `torch.cuda.synchronize()`
+- Ensures all GPU kernels complete before unloading models
+- Prevents GPU from entering bad state due to incomplete operations
+- Applied to both image and video generation cancellations
 
 **2. config.py GPU Detection**
 - Checks `MYDIFFUSER_SKIP_GPU_DETECT=1` environment variable
