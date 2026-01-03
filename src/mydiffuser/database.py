@@ -1,67 +1,39 @@
 """
 Database enhancements for VRAM and time estimation tracking.
+
+NOTE: As of schema v5, performance data is stored in outputs/runs.db
+instead of data/performance.db. This module provides backwards-compatible
+access to the unified database.
 """
 
-import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
-from mydiffuser.config import PROJECT_ROOT
-
-DB_PATH = PROJECT_ROOT / "data" / "performance.db"
+# Use runs.db as the primary database (consolidated in schema v5)
+DB_PATH = Path("outputs/runs.db")
 
 
 class PerformanceTracker:
-    """Tracks job performance data for VRAM and time estimation"""
+    """Tracks job performance data for VRAM and time estimation.
+
+    As of schema v5, this class writes directly to runs.db instead of
+    a separate performance.db file.
+    """
 
     def __init__(self):
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self.init_database()
+        # Ensure runs.db exists (will be created by client/database.py init)
+        if not DB_PATH.exists():
+            from mydiffuser.client.database import init_database
+            init_database()
 
     def init_database(self):
-        """Initialize the performance tracking database"""
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        """Initialize the performance tracking database.
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS job_performance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id TEXT NOT NULL,
-                worker_id TEXT NOT NULL,
-                model_id TEXT NOT NULL,
-                model_type TEXT NOT NULL,
-                parameters_json TEXT NOT NULL,
-                vram_predicted_total REAL,
-                vram_predicted_inference REAL,
-                vram_predicted_model REAL,
-                vram_actual_total REAL,
-                vram_actual_inference REAL,
-                vram_actual_model REAL,
-                model_was_loaded BOOLEAN,
-                time_predicted_seconds REAL,
-                time_actual_seconds REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create indices for efficient queries
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_job_performance_model
-            ON job_performance(model_id)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_job_performance_worker
-            ON job_performance(worker_id)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_job_performance_created
-            ON job_performance(created_at)
-        """)
-
-        conn.commit()
-        conn.close()
+        NOTE: This is now handled by client/database.py migrate_v5.
+        Kept for backwards compatibility but does nothing.
+        """
+        pass
 
     def record_job_performance(
         self,
@@ -76,57 +48,65 @@ class PerformanceTracker:
         time_estimates: dict[str, float],
         time_actual: float,
     ):
-        """Record job performance data for ML training"""
+        """Record job performance data directly in runs table.
+
+        NOTE: As of schema v5, performance data is stored in the runs table.
+        This method updates the corresponding run record with performance data.
+        """
         conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        conn.row_factory = sqlite3.Row
 
-        cursor.execute(
-            """
-            INSERT INTO job_performance (
-                job_id, worker_id, model_id, model_type, parameters_json,
-                vram_predicted_total, vram_predicted_inference, vram_predicted_model,
-                vram_actual_total, vram_actual_inference, vram_actual_model,
-                model_was_loaded, time_predicted_seconds, time_actual_seconds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                job_id,
-                worker_id,
-                model_id,
-                model_type,
-                json.dumps(parameters),
-                vram_estimates.get("total"),
-                vram_estimates.get("inference"),
-                vram_estimates.get("model"),
-                vram_actual.get("total"),
-                vram_actual.get("inference"),
-                vram_actual.get("model"),
-                model_was_loaded,
-                time_estimates.get("predicted"),
-                time_actual,
-            ),
-        )
+        try:
+            # Update the run record with performance data
+            # job_id corresponds to run_id in the runs table
+            conn.execute(
+                """
+                UPDATE runs
+                SET
+                    vram_predicted_total = ?,
+                    vram_actual_total = ?,
+                    vram_actual_inference = ?,
+                    time_predicted_seconds = ?
+                WHERE id = ?
+            """,
+                (
+                    vram_estimates.get("total"),
+                    vram_actual.get("total"),
+                    vram_actual.get("inference"),
+                    time_estimates.get("predicted"),
+                    job_id,
+                ),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            # Log but don't fail - performance tracking is non-critical
+            import logging
+            logging.warning(f"Failed to record performance for {job_id}: {e}")
+        finally:
+            conn.close()
 
     def get_performance_stats(
         self, model_id: str, days_back: int = 90
     ) -> dict[str, Any]:
-        """Get performance statistics for a model"""
+        """Get performance statistics for a model from runs table."""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
+        # Query runs table instead of job_performance
         cursor.execute(
             f"""
             SELECT
                 AVG(vram_actual_total) as avg_vram,
-                AVG(time_actual_seconds) as avg_time,
+                AVG(seconds_elapsed) as avg_time,
                 COUNT(*) as job_count,
                 AVG(vram_actual_total - vram_predicted_total) as vram_accuracy,
-                AVG(time_actual_seconds - time_predicted_seconds) as time_accuracy
-            FROM job_performance
-            WHERE model_id = ? AND created_at > datetime('now', '-{days_back} days')
+                AVG(seconds_elapsed - time_predicted_seconds) as time_accuracy
+            FROM runs
+            WHERE model_id = ?
+              AND timestamp > datetime('now', '-{days_back} days')
+              AND vram_actual_total IS NOT NULL
         """,
             (model_id,),
         )
@@ -145,25 +125,49 @@ class PerformanceTracker:
         return {}
 
     def get_recent_jobs(self, limit: int = 1000) -> list[dict[str, Any]]:
-        """Get recent job performance data for ML training"""
+        """Get recent job performance data from runs table for ML training."""
         conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+
         cursor = conn.cursor()
 
+        # Query runs table for recent jobs with performance data
         cursor.execute(
             """
-            SELECT * FROM job_performance
-            ORDER BY created_at DESC
+            SELECT
+                id as job_id,
+                model_id,
+                type as model_type,
+                width, height, num_inference_steps, guidance_scale,
+                num_frames, fps, duration_seconds,
+                vram_predicted_total, vram_actual_total, vram_actual_inference,
+                time_predicted_seconds, seconds_elapsed as time_actual_seconds,
+                inference_seconds, decode_seconds, encode_seconds,
+                gpu_name, gpu_arch,
+                timestamp as created_at
+            FROM runs
+            WHERE vram_actual_total IS NOT NULL
+            ORDER BY timestamp DESC
             LIMIT ?
         """,
             (limit,),
         )
 
-        columns = [description[0] for description in cursor.description]
-        results = [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+        results = [dict(row) for row in cursor.fetchall()]
 
+        # Reconstruct parameters dict for backwards compatibility
         for result in results:
-            result["parameters"] = json.loads(result["parameters_json"])
-            del result["parameters_json"]
+            result["parameters"] = {
+                "width": result.get("width"),
+                "height": result.get("height"),
+                "num_inference_steps": result.get("num_inference_steps"),
+                "guidance_scale": result.get("guidance_scale"),
+                "num_frames": result.get("num_frames"),
+                "fps": result.get("fps"),
+                "duration_seconds": result.get("duration_seconds"),
+            }
+            # Remove None values
+            result["parameters"] = {k: v for k, v in result["parameters"].items() if v is not None}
 
         conn.close()
         return results

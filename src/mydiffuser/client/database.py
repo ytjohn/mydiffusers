@@ -242,6 +242,143 @@ def migrate_v4_create_fts(conn: sqlite3.Connection):
     logger.info("Migration v4 complete")
 
 
+def migrate_v5_consolidate_performance(conn: sqlite3.Connection):
+    """Migration 5: Consolidate performance.db into runs.db.
+
+    Adds performance tracking columns to runs table and creates
+    performance_predictions table. Migrates data from data/performance.db.
+    """
+    logger.info("Applying migration v5: Consolidating performance tracking")
+
+    # Helper to check if column exists
+    def column_exists(table: str, column: str) -> bool:
+        cursor = conn.execute(f'PRAGMA table_info({table})')
+        columns = [row[1] for row in cursor.fetchall()]
+        return column in columns
+
+    # Add GPU identification columns (if they don't exist)
+    if not column_exists('runs', 'gpu_name'):
+        conn.execute('ALTER TABLE runs ADD COLUMN gpu_name TEXT')
+    if not column_exists('runs', 'gpu_arch'):
+        conn.execute('ALTER TABLE runs ADD COLUMN gpu_arch TEXT')
+
+    # Add VRAM tracking columns
+    if not column_exists('runs', 'vram_predicted_total'):
+        conn.execute('ALTER TABLE runs ADD COLUMN vram_predicted_total REAL')
+    if not column_exists('runs', 'vram_actual_total'):
+        conn.execute('ALTER TABLE runs ADD COLUMN vram_actual_total REAL')
+    if not column_exists('runs', 'vram_actual_inference'):
+        conn.execute('ALTER TABLE runs ADD COLUMN vram_actual_inference REAL')
+
+    # Add timing tracking columns
+    if not column_exists('runs', 'time_predicted_seconds'):
+        conn.execute('ALTER TABLE runs ADD COLUMN time_predicted_seconds REAL')
+    if not column_exists('runs', 'inference_seconds'):
+        conn.execute('ALTER TABLE runs ADD COLUMN inference_seconds REAL')
+    if not column_exists('runs', 'decode_seconds'):
+        conn.execute('ALTER TABLE runs ADD COLUMN decode_seconds REAL')
+    if not column_exists('runs', 'encode_seconds'):
+        conn.execute('ALTER TABLE runs ADD COLUMN encode_seconds REAL')
+
+    # Create performance_predictions table for ML model coefficients
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS performance_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id TEXT NOT NULL,
+            gpu_arch TEXT NOT NULL,
+            generation_type TEXT NOT NULL,
+            coefficients_json TEXT NOT NULL,
+            sample_count INTEGER NOT NULL,
+            last_trained_at TEXT NOT NULL,
+            mae_vram REAL,
+            mape_time REAL,
+            UNIQUE(model_id, gpu_arch, generation_type)
+        )
+    ''')
+
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_performance_predictions_lookup
+        ON performance_predictions(model_id, gpu_arch, generation_type)
+    ''')
+
+    # Migrate data from performance.db if it exists
+    from mydiffuser.config import PROJECT_ROOT
+    perf_db_path = PROJECT_ROOT / "data" / "performance.db"
+
+    if perf_db_path.exists():
+        logger.info("Migrating data from data/performance.db...")
+
+        try:
+            # Attach performance.db with a timeout
+            conn.execute(f"ATTACH DATABASE '{perf_db_path}' AS perf_db")
+
+            # Count records to migrate
+            count_result = conn.execute(
+                'SELECT COUNT(*) FROM perf_db.job_performance'
+            ).fetchone()
+            record_count = count_result[0] if count_result else 0
+
+            if record_count > 0:
+                logger.info(f"Found {record_count} performance records to migrate")
+
+                # Migrate performance data to runs table
+                # Match by run_id (stored as job_id in performance.db)
+                migrated = conn.execute('''
+                    UPDATE runs
+                    SET
+                        vram_predicted_total = (
+                            SELECT vram_predicted_total
+                            FROM perf_db.job_performance
+                            WHERE perf_db.job_performance.job_id = runs.id
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        ),
+                        vram_actual_total = (
+                            SELECT vram_actual_total
+                            FROM perf_db.job_performance
+                            WHERE perf_db.job_performance.job_id = runs.id
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        ),
+                        vram_actual_inference = (
+                            SELECT vram_actual_inference
+                            FROM perf_db.job_performance
+                            WHERE perf_db.job_performance.job_id = runs.id
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        ),
+                        time_predicted_seconds = (
+                            SELECT time_predicted_seconds
+                            FROM perf_db.job_performance
+                            WHERE perf_db.job_performance.job_id = runs.id
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        )
+                    WHERE EXISTS (
+                        SELECT 1 FROM perf_db.job_performance
+                        WHERE perf_db.job_performance.job_id = runs.id
+                    )
+                ''')
+
+                logger.info(f"Migrated performance data for {migrated.rowcount} runs")
+
+            logger.info("Performance.db migration complete")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Failed to migrate from performance.db: {e}")
+            logger.warning("You may need to close other processes accessing the database and retry")
+        finally:
+            # Try to detach, ignore errors
+            try:
+                conn.execute('DETACH DATABASE perf_db')
+            except Exception:
+                pass
+    else:
+        logger.info("No performance.db found, skipping data migration")
+
+    set_schema_version(conn, 5)
+    logger.info("Migration v5 complete")
+
+
 def init_database():
     """Initialize SQLite database with schema and apply migrations."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -274,6 +411,7 @@ def init_database():
             (2, migrate_v2_create_client_jobs),
             (3, migrate_v3_create_assist_tables),
             (4, migrate_v4_create_fts),
+            (5, migrate_v5_consolidate_performance),
         ]
 
         for version, migration_func in migrations:
@@ -331,6 +469,23 @@ def index_run(run_id: str, meta: dict):
                     height, width = dimensions
                     logger.debug(f"[{run_id}] Extracted dimensions from video: {width}x{height}")
 
+    # Extract GPU info (from config, stored in metadata)
+    gpu_name = params.get('gpu_name')
+    gpu_arch = params.get('gpu_arch')
+
+    # Extract VRAM data (if present)
+    vram_data = meta.get('vram', {})
+    vram_predicted_total = vram_data.get('predicted_total')
+    vram_actual_total = vram_data.get('actual_total') or vram_data.get('used')
+    vram_actual_inference = vram_data.get('actual_inference')
+
+    # Extract timing data
+    time_predicted = meta.get('time_predicted_seconds')
+    timing = meta.get('timing', {})
+    inference_seconds = timing.get('inference_seconds')
+    decode_seconds = timing.get('decode_seconds')
+    encode_seconds = timing.get('encode_seconds')
+
     with get_db() as conn:
         conn.execute('''
             INSERT OR REPLACE INTO runs
@@ -338,12 +493,18 @@ def index_run(run_id: str, meta: dict):
              height, width, seed, num_inference_steps, guidance_scale,
              device, dtype, model_id,
              num_frames, fps, duration_seconds, resolution,
-             worker_name, negative_prompt)
+             worker_name, negative_prompt,
+             gpu_name, gpu_arch,
+             vram_predicted_total, vram_actual_total, vram_actual_inference,
+             time_predicted_seconds, inference_seconds, decode_seconds, encode_seconds)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?)
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?)
         ''', (
             run_id,
             meta.get('type'),
@@ -372,6 +533,18 @@ def index_run(run_id: str, meta: dict):
             # Worker/prompts
             params.get('worker_name'),
             params.get('negative_prompt'),
+            # GPU info
+            gpu_name,
+            gpu_arch,
+            # VRAM tracking
+            vram_predicted_total,
+            vram_actual_total,
+            vram_actual_inference,
+            # Timing tracking
+            time_predicted,
+            inference_seconds,
+            decode_seconds,
+            encode_seconds,
         ))
 
 
