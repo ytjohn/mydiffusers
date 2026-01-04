@@ -1,6 +1,6 @@
 # MyDiffuser - Project Context for AI Agents
 
-> **For AI Agents:** Also read [CLAUDE.md](./CLAUDE.md) for working guidelines, common pitfalls, and development best practices.
+> **Note:** [CLAUDE.md](./CLAUDE.md) points here for the comprehensive agent guide.
 
 ## Project Overview
 
@@ -95,10 +95,11 @@ Only `blocks` dependencies affect the ready work queue.
 
 ### Code Standards
 
-- **Go version**: 1.21+
-- **Linting**: `golangci-lint run ./...` (baseline warnings documented in LINTING.md)
-- **Testing**: All new features need tests (`go test ./...`)
-- **Documentation**: Update relevant .md files
+- **Python version**: 3.10+
+- **Linting**: `ruff check src/` (20 acceptable warnings documented below)
+- **Type checking**: `mypy src/mydiffuser` (optional, not strict)
+- **Testing**: Test manually via web UI or benchmark scripts
+- **Documentation**: Update relevant .md files (especially this file for architecture changes)
 
 
 ## Hardware Context
@@ -106,17 +107,30 @@ Only `blocks` dependencies affect the ready work queue.
 - **GPU**: AMD Max+ 395 (Strix Point APU, gfx1151)
 - **Memory**: 128GB unified memory (96GB allocated to GPU via BIOS, 32GB to CPU)
 - **OS**: Ubuntu 24.04.3 LTS, kernel 6.14
-- **Platform**: ROCm 7.0 (nightly PyTorch wheels) - some models/features may have compatibility differences
+- **Platform**: ROCm 7.1 (stable production) with PyTorch 2.11.0.dev20260102 nightly wheels
+  - Note: ROCm 7.1 (production) and 7.9+/7.11 (preview) are parallel streams, not sequential
+  - Using stable ROCm 7.1 + latest PyTorch nightlies is recommended for gfx1151
 - **PyTorch**: Configured for `bfloat16` with math-only SDP backend for AMD stability
 
 ### ROCm/gfx1151 Known Issues
 
 The gfx1151 GPU architecture is very new and has limited MIOpen kernel support:
-- **No pre-built kernel database** - MIOpen must JIT-compile kernels
-- **conv3d instability** - Video VAE decode fails on GPU with HIP launch errors
-- **Workaround**: VAE decode runs on CPU (slower but stable)
 
-See `vae-issues.md` for debugging history and workarounds.
+**MIOpen Kernel Compilation:**
+- **No pre-built kernel database** - MIOpen must JIT-compile kernels on first use
+- **First video generation**: 20-30 minute delay during VAE decode (kernel compilation)
+- **Subsequent generations**: Kernels cached in `~/.cache/miopen/`, no recompilation needed
+- **Cache persistence**: Survives reboots, only cleared on PyTorch/ROCm upgrades
+
+**VAE Decode Performance:**
+- **GPU with bf16**: ✅ **WORKS** - 31s decode after initial kernel compilation (4x faster than CPU)
+  - Requires proper GPU cleanup between jobs (implemented 2026-01-04)
+  - Without cleanup: Progressive slowdown and eventual GPU hang after 4-5 videos
+- **CPU with fp32**: ✅ Stable fallback - 127s decode, no compilation delay
+  - Use `MYDIFFUSER_VAE_DEVICE=cpu` for maximum stability
+- **Recommendation**: Use GPU (default) with proper cleanup for 4x speedup
+
+See `vae-issues.md` for historical debugging and alternative configurations.
 
 ### GTT Memory Allocation
 
@@ -378,6 +392,7 @@ mypy src/mydiffuser
 ## Configuration Files
 
 - `pyproject.toml` - Dependencies, build config, ruff/mypy settings
+- `scripts/install-rocm.sh` - Installs nightly torch with rocm support
 - `src/mydiffuser/config.py` - Runtime configuration
 - `src/mydiffuser/utils/presets.py` - Generation presets
 
@@ -386,8 +401,8 @@ mypy src/mydiffuser
 1. **ROCm Compatibility**: Not all diffusers models work on AMD. Wan2.2 has official ROCm support.
 2. **Memory**: The 14B video model needs significant VRAM. Framework's unified memory helps.
 3. **Torch Backends**: Specific SDP backends are disabled for AMD compatibility (see `configure_torch_backends()`).
-4. **Circular Imports**: Use `server/state.py` for shared state to avoid import cycles.
-5. **gfx1151 Workarounds**: Video VAE must run on CPU due to MIOpen conv3d issues. See `vae-issues.md`.
+4. **Circular Imports**: Use `inference/state.py` and `worker/state.py` for shared state to avoid import cycles.
+5. **gfx1151 Workarounds**: Video VAE decode on GPU requires proper cleanup between jobs. CPU fallback available via `MYDIFFUSER_VAE_DEVICE=cpu`. See `vae-issues.md`.
 
 ## Environment Variables
 
@@ -581,6 +596,121 @@ Real-time VRAM and time estimation for both image and video generation, with act
 2. **Time planning**: Know how long generation will take (important for videos)
 3. **Parameter tuning**: Understand VRAM/time tradeoffs for different settings
 4. **Performance analysis**: Compare predicted vs actual to improve estimation models
+
+## Common Pitfalls for AI Agents
+
+### 1. Getting "Lost" in Large Files
+
+**Symptom:** Duplicate code, code after return statements, wrong indentation
+
+**Prevention:**
+- Read the full method/function before editing
+- Use Edit tool with sufficient context
+- Verify no return statement exists before adding code
+
+**Example of what NOT to do:**
+```python
+def my_function():
+    result = calculate()
+    return result  # ← First return
+
+    # ❌ UNREACHABLE CODE BELOW (agent got lost)
+    result = calculate()  # Duplicate
+    return result  # Duplicate return
+```
+
+### 2. Wrong File Paths
+
+**Symptom:** Edits fail, paths in config don't match actual structure
+
+**Prevention:**
+- Use Glob/Find to verify paths exist
+- Check `src/mydiffuser/client/` vs `src/mydiffuser/worker/`
+- Project uses `worker/` not `server/`
+
+### 3. Breaking ROCm Compatibility
+
+**Symptom:** Code works on CUDA but fails on AMD
+
+**Prevention:**
+- Check this file for known ROCm issues
+- Don't use `torch.compile()` without testing
+- Video VAE decode has gfx1151 stability issues
+- Avoid flash-attention or untested SDP backends
+
+### 4. uv sync / pip install torch might replaces rocm wheels
+
+**Sympton:** Python / Torch unable to detect rocm GPU
+
+Sometimes `uv run` or `uv sync` ran incorrectly will install torch wheels not compiled for rocm.  The @scripts/install-rocm.sh installs torch wheels in a specific order.
+
+**Dectection:**
+
+```shell
+python -c "import torch; print(f'torch: {torch.__version__}'); print(f'hip: {torch.version.hip}'); print(f'cuda: {torch.version.cuda}')"
+torch: 2.11.0.dev20260102+rocm7.1
+hip: 7.1.52802
+cuda: None
+```
+
+If torch does not show "+rocm" then hip will be empty. "cuda" should be "None".
+
+**Remediation**
+
+```shell
+uv pip uninstall torch torchvision torchaudio
+./scripts/install-rocm.sh
+```
+
+## Git Workflow
+
+### When Committing
+
+- Fix ruff errors first (except the 20 acceptable ones)
+- Test basic functionality
+- Write clear commit messages
+- Follow existing style
+- Run `bd export -o .beads/issues.jsonl` before committing
+
+### Commit Message Style
+
+```
+type: brief description
+
+Problem:
+- Issue point 1
+- Issue point 2
+
+Solution:
+- Fix point 1
+- Fix point 2
+
+Result:
+- Outcome point 1
+
+Testing:
+- Test status
+
+Fixes <issue-id>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+```
+
+**Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+
+## Summary Checklist
+
+Before finishing work:
+- [ ] Read relevant sections of AGENTS.md
+- [ ] Run `ruff check src/` (20 warnings are acceptable)
+- [ ] Test the change locally if possible
+- [ ] Update AGENTS.md if architecture changed
+- [ ] No duplicate code or unreachable code
+- [ ] Client/worker separation maintained
+- [ ] Exception handling uses `from e` or `from None`
+- [ ] Run `bd export -o .beads/issues.jsonl` if issues were updated
 
 ## Future Plans
 
