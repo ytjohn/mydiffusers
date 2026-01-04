@@ -15,10 +15,20 @@ wheels/
 # Outputs
 outputs/
 archive/
+benchmark_output/
+data/
 
 # Environment files with secrets
 .env.lambda
 *.env
+
+# Debug and temporary files
+debug_*.py
+test_*.py
+tmp/
+*.log
+orphaned-job.txt
+*.backup
 
 # ignore uv.lock because we have to switch between rocm and cuda
 uv.lock

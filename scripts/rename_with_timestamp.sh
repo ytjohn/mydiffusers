@@ -3,7 +3,7 @@
 # This prepends the creation timestamp (YYYYMMDD-HHMMSS) to directory names
 # making them easier to browse by date
 
-IMAGE_DIR="${1:-/home/ytjohn/projects/mydiffuser/outputs/run/image}"
+IMAGE_DIR="${1:-outputs/run/image}"
 
 if [ ! -d "$IMAGE_DIR" ]; then
     echo "Error: Directory '$IMAGE_DIR' does not exist"

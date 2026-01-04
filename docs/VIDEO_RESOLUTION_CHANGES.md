@@ -230,7 +230,6 @@ Expected log output:
 ## Related Documentation
 
 - WAN2.2 Model: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers
-- Plan file: /home/ytjohn/.claude/plans/bright-splashing-rabin.md
 
 ## Summary of Benefits
 
