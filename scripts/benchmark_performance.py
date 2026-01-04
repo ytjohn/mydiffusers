@@ -88,7 +88,8 @@ class BenchmarkConfig:
     # Prompts
     image_prompt: str = "dc comics animation realistic style. batman hacking" \
     " on a computer in a datacenter while fending off female and male villain distractions. " \
-    " computer screens are visible"
+    " computer screens are visible. dramatic lighting, " \
+    " high detail, intricate, sharp focus, digital art"
     video_prompt: str = "the shadows grow longer"
 
 
@@ -539,10 +540,11 @@ class PerformanceBenchmark:
             if not source_run_id:
                 raise RuntimeError("Failed to generate source image for warmup")
 
-            # Submit smallest possible video job (480p, 3s, 15 steps)
-            # Allow up to 300s for model loading (video models are large, first load with MIOpen compile can be very slow)
-            job_id = await self.submit_video_job(832, 480, 3, 15, source_run_id)
-            await self.poll_job_completion(job_id, silent=True, max_wait=300)
+            # Submit MINIMAL video job: 480p, 1 second, 8 steps (fastest possible)
+            # Allow up to 30 minutes for first load - MIOpen VAE kernel compilation can take 20-30 min
+            job_id = await self.submit_video_job(832, 480, 1, 8, source_run_id)
+            print(f"[warmup job:{job_id[:8]}]", end=" ", flush=True)
+            await self.poll_job_completion(job_id, silent=True, max_wait=1800)
             print("✓")
         except Exception as e:
             # Model may have loaded even if we got an error
