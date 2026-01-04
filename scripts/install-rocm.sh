@@ -46,3 +46,6 @@ uv pip install -e . --no-deps
 echo ""
 echo "=== Verifying ROCm installation ==="
 python -c "import torch; print(f'torch: {torch.__version__}'); print(f'hip: {torch.version.hip}'); print(f'cuda: {torch.version.cuda}')"
+echo ""
+echo "⚠️  IMPORTANT: Do NOT use 'uv run' - it will replace ROCm torch with CUDA!"
+echo "   Use './scripts/run.sh' or activate venv first: source .venv/bin/activate"

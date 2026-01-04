@@ -13,9 +13,6 @@ We use bd (beads) for issue tracking instead of Markdown TODOs or external tools
 ### Quick Reference
 
 ```bash
-# list work, including in progress
-bd list --json
-
 # Find ready work (no blockers)
 bd ready --json
 
@@ -684,6 +681,24 @@ cuda: None
 ```
 
 If torch doesn't show "+rocm" then hip will be empty and "cuda" should be "None".
+
+**Critical: Do NOT use `uv run`**
+
+`uv run` will ALWAYS replace ROCm torch with CUDA version, even with the explicit install approach. This is because `uv run` does dependency resolution for packages like accelerate/diffusers which depend on torch, and it installs the stable CUDA version from PyPI.
+
+**Correct usage:**
+```shell
+# ✅ Use the wrapper script (activates venv automatically)
+./scripts/run.sh script.py
+./scripts/run.sh -c "import torch; print(torch.__version__)"
+
+# ✅ Or activate venv first
+source .venv/bin/activate
+python script.py
+
+# ❌ NEVER use uv run (will break torch)
+uv run python script.py  # Will replace ROCm with CUDA!
+```
 
 **If Broken After New Package Install:**
 
