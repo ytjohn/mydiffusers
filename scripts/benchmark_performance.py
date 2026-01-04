@@ -591,6 +591,7 @@ class PerformanceBenchmark:
 
                 # Submit job
                 job_id = await self.submit_image_job(width, height, steps, guidance)
+                print(f"[job:{job_id[:8]}]", end=" ", flush=True)
 
                 # Wait for completion
                 result = await self.poll_job_completion(job_id)
@@ -610,7 +611,7 @@ class PerformanceBenchmark:
                     error_pct = ((actual_time - predicted_time) / predicted_time * 100) if predicted_time > 0 else 0
 
                     print(
-                        f" ✓ {actual_time:.1f}s ({error_pct:+.0f}%, {time_per_step:.2f}s/step)"
+                        f"✓ {actual_time:.1f}s ({error_pct:+.0f}%, {time_per_step:.2f}s/step) [run:{run_id}]"
                     )
 
                     # Store result with our explicit estimate (override database value)
@@ -727,6 +728,7 @@ class PerformanceBenchmark:
 
                 # Submit job
                 job_id = await self.submit_video_job(width, height, duration, steps, source_run_id)
+                print(f"[job:{job_id[:8]}]", end=" ", flush=True)
 
                 # Wait for completion
                 result = await self.poll_job_completion(job_id)
@@ -743,7 +745,7 @@ class PerformanceBenchmark:
                     error_pct = ((actual_time - predicted_time) / predicted_time * 100) if predicted_time > 0 else 0
 
                     print(
-                        f" ✓ {actual_time:.1f}s ({error_pct:+.0f}%, {time_per_step:.2f}s/step)"
+                        f"✓ {actual_time:.1f}s ({error_pct:+.0f}%, {time_per_step:.2f}s/step) [run:{run_id}]"
                     )
 
                     # Store result with our explicit estimate (override database value)
