@@ -470,13 +470,19 @@ def index_run(run_id: str, meta: dict):
                     logger.debug(f"[{run_id}] Extracted dimensions from video: {width}x{height}")
 
     # Extract GPU info (from config, stored in metadata)
-    gpu_name = params.get('gpu_name')
-    gpu_arch = params.get('gpu_arch')
+    # Support both params dict and top-level fields
+    gpu_name = params.get('gpu_name') or meta.get('gpu_name')
+    gpu_arch = params.get('gpu_arch') or meta.get('gpu_arch')
 
     # Extract VRAM data (if present)
+    # Support both nested ('vram': {'used': ...}) and flat ('vram_used': ...) formats
     vram_data = meta.get('vram', {})
-    vram_predicted_total = vram_data.get('predicted_total')
-    vram_actual_total = vram_data.get('actual_total') or vram_data.get('used')
+    vram_predicted_total = vram_data.get('predicted_total') or meta.get('vram_predicted_total')
+    vram_actual_total = (
+        vram_data.get('actual_total')
+        or vram_data.get('used')
+        or meta.get('vram_used')  # Fallback to flat field
+    )
     vram_actual_inference = vram_data.get('actual_inference')
 
     # Extract timing data

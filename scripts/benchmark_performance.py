@@ -23,6 +23,15 @@ Usage:
 
     # Quick test mode (6 image samples)
     python scripts/benchmark_performance.py --quick
+
+    # Filter by resolution (e.g., only test 720p videos)
+    python scripts/benchmark_performance.py --videos-only --resolution 720p
+
+    # Filter by multiple criteria
+    python scripts/benchmark_performance.py --videos-only --resolution 1280x704 --duration 3 --steps 30
+
+    # Skip to specific test (e.g., start at test #6)
+    python scripts/benchmark_performance.py --videos-only --start-index 6
 """
 
 import argparse
@@ -79,8 +88,9 @@ class BenchmarkConfig:
 class PerformanceBenchmark:
     """Benchmark runner for performance data collection"""
 
-    def __init__(self, config: BenchmarkConfig):
+    def __init__(self, config: BenchmarkConfig, filters: dict[str, Any] | None = None):
         self.config = config
+        self.filters = filters or {}
         self.results: list[dict[str, Any]] = []
         self.start_time = time.time()
         self.completed_count = 0
@@ -106,6 +116,65 @@ class PerformanceBenchmark:
                 if height % 16 != 0:
                     msg = f"Video resolution {width}x{height}: height must be divisible by 16"
                     raise ValueError(msg)
+
+    def _parse_resolution(self, res_str: str) -> tuple[int, int] | None:
+        """Parse resolution string to (width, height) tuple
+
+        Supports:
+        - WIDTHxHEIGHT (e.g., '1280x704')
+        - Preset names (e.g., '480p', '720p', '1080p')
+        """
+        # Common presets
+        presets = {
+            "480p": (832, 480),
+            "720p": (1280, 704),
+            "1080p": (1920, 1088),
+        }
+
+        # Check if it's a preset
+        if res_str.lower() in presets:
+            return presets[res_str.lower()]
+
+        # Try parsing WIDTHxHEIGHT
+        if 'x' in res_str.lower():
+            try:
+                width, height = res_str.lower().split('x')
+                return (int(width), int(height))
+            except (ValueError, AttributeError):
+                pass
+
+        return None
+
+    def _apply_filters(self, combinations: list[tuple]) -> list[tuple]:
+        """Apply filters to combination list"""
+        if not self.filters:
+            return combinations
+
+        filtered = []
+        for combo in combinations:
+            width, height = combo[0], combo[1]
+
+            # Check resolution filter
+            if "resolution" in self.filters:
+                target_res = self._parse_resolution(self.filters["resolution"])
+                if target_res and (width, height) != target_res:
+                    continue
+
+            # Check duration filter (for video)
+            if "duration" in self.filters and len(combo) >= 3:
+                duration = combo[2]
+                if duration != self.filters["duration"]:
+                    continue
+
+            # Check steps filter
+            if "steps" in self.filters:
+                steps = combo[-1]  # Steps is always last element
+                if steps != self.filters["steps"]:
+                    continue
+
+            filtered.append(combo)
+
+        return filtered
 
     async def check_worker_health(self) -> bool:
         """Verify worker is online before starting"""
@@ -143,6 +212,29 @@ class PerformanceBenchmark:
         except Exception as e:
             print(f"⚠ Could not check for active jobs: {e}")
             return False, 0
+
+    async def unload_model(self, model_type: str):
+        """Unload a specific model from worker
+
+        Args:
+            model_type: "image", "video", or "assistant"
+        """
+        try:
+            # Get worker endpoint from health
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.config.client_url}/api/workers/{self.config.worker_name}/health"
+                )
+                health = response.json()
+                worker_endpoint = health.get("endpoint", "http://localhost:8001")
+
+            # Call unload endpoint on worker directly
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(f"{worker_endpoint}/unload/{model_type}")
+                response.raise_for_status()
+        except Exception as e:
+            # Non-fatal, just log it
+            print(f"⚠ Failed to unload {model_type} model: {e}")
 
     async def get_image_estimate(
         self, width: int, height: int, steps: int, guidance: float
@@ -221,23 +313,72 @@ class PerformanceBenchmark:
             data = response.json()
             return data["job_id"]
 
-    async def submit_video_job(
-        self, width: int, height: int, duration: int, steps: int
-    ) -> str:
-        """Submit video job and return job_id"""
-        # First, generate a source image for video
-        print("  Generating source image for video...")
-        source_job_id = await self.submit_image_job(width, height, 6, 0.3)
-        await self.poll_job_completion(source_job_id, silent=True)
+    async def find_baseline_image(self, width: int, height: int) -> str | None:
+        """Find existing baseline image for this resolution"""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Query for existing baseline images with this resolution
+                # Get multiple results since API does partial tag matching
+                response = await client.get(
+                    f"{self.config.client_url}/api/runs",
+                    params={
+                        "tags": "benchmark_baseline",
+                        "type": "image",
+                        "width": width,
+                        "height": height,
+                        "limit": 10,
+                    },
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    runs = data.get("runs", [])
+                    # Find first image that actually has the benchmark_baseline tag
+                    for run in runs:
+                        tags = run.get("tags", [])
+                        if "benchmark_baseline" in tags:
+                            return run.get("id")
+        except Exception:
+            pass
+        return None
 
-        # Get the run_id from the completed job
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{self.config.client_url}/api/jobs/{source_job_id}"
+    async def generate_source_image(self, width: int, height: int, baseline: bool = False) -> str:
+        """Generate a source image for video and return worker_run_id
+
+        Args:
+            width: Image width
+            height: Image height
+            baseline: If True, tag as benchmark_baseline for reuse
+        """
+        tags = ["benchmark", "video_source"]
+        if baseline:
+            tags.append("benchmark_baseline")
+
+        # Submit with appropriate tags
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.config.client_url}/api/jobs/image",
+                data={
+                    "prompt": self.config.image_prompt,
+                    "worker": self.config.worker_name,
+                    "width": width,
+                    "height": height,
+                    "steps": 6,
+                    "guidance": 0.3,
+                    "seed": self.config.seed,
+                    "tags": json.dumps(tags),
+                },
             )
+            response.raise_for_status()
             data = response.json()
-            # API returns "results" (plural) not "result"
-            source_run_id = data["results"]["worker_run_id"]
+            job_id = data["job_id"]
+
+        result = await self.poll_job_completion(job_id, silent=True)
+        return result.get("run_id")
+
+    async def submit_video_job(
+        self, width: int, height: int, duration: int, steps: int, source_run_id: str
+    ) -> str:
+        """Submit video job with pre-generated source image"""
 
         # Submit video job
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -373,8 +514,13 @@ class PerformanceBenchmark:
         # Model not loaded, submit minimal warmup job
         print("loading...", end=" ", flush=True)
         try:
+            # Generate source image first (minimal job)
+            source_run_id = await self.generate_source_image(832, 480)
+            if not source_run_id:
+                raise RuntimeError("Failed to generate source image for warmup")
+
             # Submit smallest possible video job (480p, 3s, 15 steps)
-            job_id = await self.submit_video_job(832, 480, 3, 15)
+            job_id = await self.submit_video_job(832, 480, 3, 15, source_run_id)
             await self.poll_job_completion(job_id, silent=True)
             print("✓")
         except Exception as e:
@@ -394,6 +540,14 @@ class PerformanceBenchmark:
             for guidance in self.config.image_guidance_scales:
                 for steps in self.config.image_step_counts:
                     combinations.append((width, height, guidance, steps))
+
+        # Apply filters
+        combinations = self._apply_filters(combinations)
+
+        # Apply start index (1-based to 0-based)
+        start_idx = self.filters.get("start_index", 1) - 1
+        if start_idx > 0:
+            combinations = combinations[start_idx:]
 
         # Apply batch size limit
         if self.config.batch_size:
@@ -466,11 +620,52 @@ class PerformanceBenchmark:
 
     async def run_video_benchmarks(self):
         """Run video generation benchmark grid"""
-        # Warmup model first
         print()
-        await self.warmup_video_model()
-
         print("🎬 Running video benchmarks...")
+
+        # Check for baseline source images BEFORE loading models
+        print("  Checking for baseline source images...", end=" ", flush=True)
+        source_images = {}
+        unique_resolutions = set(
+            (width, height) for width, height in self.config.video_resolutions
+        )
+
+        # Check which baselines exist
+        missing_baselines = []
+        for width, height in unique_resolutions:
+            source_run_id = await self.find_baseline_image(width, height)
+            if source_run_id:
+                source_images[(width, height)] = source_run_id
+            else:
+                missing_baselines.append((width, height))
+
+        if not missing_baselines:
+            print(f"✓ (all {len(source_images)} found)")
+        else:
+            print(f"({len(source_images)} found, {len(missing_baselines)} needed)")
+
+            # Need to generate baselines - ensure image model is loaded
+            print("  Ensuring image model loaded for baseline generation...", end=" ", flush=True)
+            await self.warmup_image_model()
+            print("✓")
+
+            # Generate missing baselines
+            print("  Generating baseline images...", end=" ", flush=True)
+            for width, height in missing_baselines:
+                source_run_id = await self.generate_source_image(width, height, baseline=True)
+                if source_run_id:
+                    source_images[(width, height)] = source_run_id
+                else:
+                    raise RuntimeError(f"Failed to generate baseline for {width}×{height}")
+            print(f"✓ ({len(missing_baselines)} generated)")
+
+            # Unload image model before loading video
+            print("  Unloading image model...", end=" ", flush=True)
+            await self.unload_model("image")
+            print("✓")
+
+        # Now load video model
+        await self.warmup_video_model()
 
         # Calculate total
         combinations = []
@@ -478,6 +673,14 @@ class PerformanceBenchmark:
             for duration in self.config.video_durations:
                 for steps in self.config.video_step_counts:
                     combinations.append((width, height, duration, steps))
+
+        # Apply filters
+        combinations = self._apply_filters(combinations)
+
+        # Apply start index (1-based to 0-based)
+        start_idx = self.filters.get("start_index", 1) - 1
+        if start_idx > 0:
+            combinations = combinations[start_idx:]
 
         # Apply batch size limit
         if self.config.batch_size:
@@ -498,8 +701,11 @@ class PerformanceBenchmark:
                 estimated_time = await self.get_video_estimate(width, height, duration, steps)
                 print(f"(est: {estimated_time:.1f}s)", end=" ", flush=True)
 
+                # Get pre-generated source image for this resolution
+                source_run_id = source_images[(width, height)]
+
                 # Submit job
-                job_id = await self.submit_video_job(width, height, duration, steps)
+                job_id = await self.submit_video_job(width, height, duration, steps, source_run_id)
 
                 # Wait for completion
                 result = await self.poll_job_completion(job_id)
@@ -745,6 +951,30 @@ async def main():
         action="store_true",
         help="Quick test mode (6 image samples only)",
     )
+
+    # Filtering options
+    parser.add_argument(
+        "--resolution",
+        type=str,
+        help="Filter by resolution (e.g., '1280x704' or '720p')",
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        help="Filter video tests by duration (e.g., 3 or 5)",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        help="Filter tests by step count (e.g., 15 or 30)",
+    )
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=1,
+        help="Start from specific test index (1-based)",
+    )
+
     args = parser.parse_args()
 
     # Configure
@@ -765,12 +995,22 @@ async def main():
     # Handle batch size and quick mode
     if args.quick:
         config.batch_size = 6
-        config.test_videos = False  # Quick mode is images only
     elif args.batch_size:
         config.batch_size = args.batch_size
 
+    # Build filters
+    filters = {}
+    if args.resolution:
+        filters["resolution"] = args.resolution
+    if args.duration:
+        filters["duration"] = args.duration
+    if args.steps:
+        filters["steps"] = args.steps
+    if args.start_index != 1:
+        filters["start_index"] = args.start_index
+
     # Run benchmark
-    benchmark = PerformanceBenchmark(config)
+    benchmark = PerformanceBenchmark(config, filters)
 
     print("=" * 60)
     print("PERFORMANCE BENCHMARKING")
@@ -781,6 +1021,8 @@ async def main():
     print(f"Video tests: {config.test_videos}")
     if config.batch_size:
         print(f"Batch size: {config.batch_size}")
+    if filters:
+        print(f"Filters: {filters}")
     print()
 
     # Check worker health
@@ -791,7 +1033,7 @@ async def main():
     print("✓")
 
     # Check for active jobs (benchmark needs exclusive access)
-    has_jobs, queued = await benchmark.check_for_active_jobs()
+    has_jobs, _ = await benchmark.check_for_active_jobs()
     if has_jobs:
         print("\n❌ Worker has active jobs (running or queued)")
         print("   Benchmarks need exclusive worker access for accurate timing.")

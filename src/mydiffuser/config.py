@@ -180,11 +180,18 @@ DTYPE_NAME = os.environ.get("MYDIFFUSER_DTYPE", "bf16").lower()
 DTYPE = _DTYPE_MAP.get(DTYPE_NAME, _DTYPE_MAP["bf16"])
 
 # --- VAE decode settings ---
-# ROCm (gfx1151): VAE conv3d crashes on GPU, must use CPU + fp32
+# ROCm (gfx1151): GPU VAE decode WORKS with bf16 (tested 2026-01-03)
+#   - First run: 20-30min MIOpen kernel compilation (one-time cost)
+#   - Cached runs: 31s decode (4x faster than CPU's 127s)
+#   - Kernels cached in ~/.cache/miopen/, persist across reboots
 # CUDA (NVIDIA): VAE on GPU with fp16 is fast and works great
 if IS_ROCM:
-    _DEFAULT_VAE_DEVICE = "cpu"
-    _DEFAULT_VAE_DTYPE = "fp32"
+    # GPU decode with bf16 (recommended for gfx1151)
+    _DEFAULT_VAE_DEVICE = "cuda"
+    _DEFAULT_VAE_DTYPE = "bf16"
+    # Alternative: CPU fallback (stable but 4x slower)
+    # _DEFAULT_VAE_DEVICE = "cpu"
+    # _DEFAULT_VAE_DTYPE = "fp32"
 elif IS_CUDA:
     _DEFAULT_VAE_DEVICE = "cuda"
     _DEFAULT_VAE_DTYPE = "fp16"

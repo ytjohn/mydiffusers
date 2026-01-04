@@ -49,6 +49,7 @@ class ImageGenerator(BaseGenerator):
     def __init__(self) -> None:
         super().__init__()
         self._pipe: ZImagePipeline | None = None
+        self.model_id = IMAGE_MODEL_ID  # For metadata tracking
 
     def unload(self) -> None:
         """Unload the pipeline and free GPU memory."""
@@ -172,6 +173,23 @@ class ImageGenerator(BaseGenerator):
             final_callback = _combined_callback
         else:
             final_callback = _shutdown_callback
+
+        # CRITICAL FIX: Reset scheduler state to prevent accumulation across jobs
+        # Issue: step_index accumulates (e.g., 713) instead of resetting to 0
+        # This causes "index X is out of bounds" errors after multiple generations
+        if hasattr(self._pipe, 'scheduler'):
+            scheduler = self._pipe.scheduler
+            # Reset step_index (internal state used by schedulers)
+            if hasattr(scheduler, '_step_index'):
+                scheduler._step_index = None
+                logger.debug("Reset scheduler._step_index to None")
+            # Some schedulers use public step_index
+            if hasattr(scheduler, 'step_index'):
+                try:
+                    scheduler.step_index = None
+                    logger.debug("Reset scheduler.step_index to None")
+                except AttributeError:
+                    pass  # Read-only property
 
         try:
             out = self._pipe(  # type: ignore[operator]

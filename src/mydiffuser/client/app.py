@@ -99,6 +99,10 @@ def create_app() -> FastAPI:
     from mydiffuser.client import admin_routes
     app.include_router(admin_routes.router)
 
+    # Include admin UI routes (performance dashboard)
+    from mydiffuser.client import admin_ui
+    app.include_router(admin_ui.router)
+
     # Include assistant API routes (prompt improvement)
     from mydiffuser.client import assist_routes
     app.include_router(assist_routes.router)

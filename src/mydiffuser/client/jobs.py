@@ -329,6 +329,13 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
                         )
                     except Exception as e:
                         logger.warning(f"Failed to record performance data: {e}")
+                        # Set defaults if estimation failed
+                        vram_predicted = 19.3 if job.type == "image" else 11.7
+                        time_predicted = 300
+
+                    # Add predictions to meta for database indexing
+                    meta['vram_predicted_total'] = vram_predicted
+                    meta['time_predicted_seconds'] = time_predicted
 
                     database.index_run(job.worker_run_id, meta)
 
