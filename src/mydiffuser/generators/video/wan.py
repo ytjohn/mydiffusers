@@ -245,6 +245,23 @@ class WanVideoGenerator(BaseVideoGenerator):
         start_time = time.perf_counter()
 
         try:
+            # CRITICAL FIX: Reset scheduler state to prevent accumulation across jobs
+            # Issue: step_index accumulates (e.g., 713) instead of resetting to 0
+            # This causes "index X is out of bounds" errors after multiple generations
+            if hasattr(self._pipe, 'scheduler'):
+                scheduler = self._pipe.scheduler
+                # Reset step_index (internal state used by schedulers)
+                if hasattr(scheduler, '_step_index'):
+                    scheduler._step_index = None
+                    logger.debug("%sReset scheduler._step_index to None", log_prefix)
+                # Some schedulers use public step_index
+                if hasattr(scheduler, 'step_index'):
+                    try:
+                        scheduler.step_index = None
+                        logger.debug("%sReset scheduler.step_index to None", log_prefix)
+                    except AttributeError:
+                        pass  # Read-only property
+
             logger.info("%sStarting pipeline inference...", log_prefix)
 
             # Chain callbacks if custom callback provided
@@ -312,6 +329,23 @@ class WanVideoGenerator(BaseVideoGenerator):
                 latents.dtype,
                 latents.device,
             )
+
+            # Synchronize GPU after inference to ensure clean state before VAE decode
+            # This prevents accumulated GPU stress from inference carrying into VAE decode
+            if DEVICE == "cuda" and torch.cuda.is_available():
+                logger.info("%sInference complete, synchronizing GPU...", log_prefix)
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+
+                # Log GPU memory status before VAE decode
+                free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+                total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+                logger.info(
+                    "%sGPU memory before VAE decode: %.1f GiB free / %.1f GiB total",
+                    log_prefix,
+                    free_mem,
+                    total_mem,
+                )
 
             # Trigger post-processing callback (VAE decode starting)
             if callback_on_step_end is not None:
@@ -443,6 +477,13 @@ class WanVideoGenerator(BaseVideoGenerator):
             elapsed = time.perf_counter() - start_time
             logger.error("%sGeneration failed after %.2fs: %s", log_prefix, elapsed, e)
             raise RuntimeError(f"Video generation failed: {e}") from e
+        finally:
+            # Always cleanup GPU memory, even on failure
+            # This prevents GPU state from accumulating across jobs
+            try:
+                self._cleanup_gpu_memory(log_prefix)
+            except Exception as cleanup_error:
+                logger.warning("%sGPU cleanup failed: %s", log_prefix, cleanup_error)
 
     def _save_video(
         self, frames: list, output_path: Path, fps: int, log_prefix: str = ""

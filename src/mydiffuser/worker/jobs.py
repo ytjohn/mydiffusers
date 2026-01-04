@@ -40,7 +40,8 @@ def _create_step_callback(job_id: str, total_steps: int):
         if state.is_cancelled(job_id):
             logger.info(f"[{job_id}] Cancellation detected at step {step_index + 1}/{total_steps}")
             # Signal pipeline to stop by returning None or empty dict
-            # Different pipelines handle this differently, so we'll handle cleanup in execute_* functions
+            # Different pipelines handle this differently,
+            # so we'll handle cleanup in execute_* functions
             # For now, just mark as cancelled and let the exception bubble up
             state.mark_cancelled(job_id)
             # Raise an exception to stop generation immediately
@@ -139,6 +140,7 @@ def execute_image_job(
                 "width": params["width"],
                 "num_inference_steps": params["num_inference_steps"],
                 "guidance_scale": params["guidance_scale"],
+                "model_id": generator.model_id if hasattr(generator, "model_id") else None,
             },
             "outputs": {
                 "image": "output.png",
@@ -182,6 +184,17 @@ def execute_image_job(
         raise
 
     except Exception as e:
+        # Cleanup GPU before propagating exception to prevent state accumulation
+        try:
+            import torch
+            if torch.cuda.is_available():
+                logger.info(f"[{job_id}] Synchronizing GPU after failure...")
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                logger.info(f"[{job_id}] GPU synchronized successfully")
+        except Exception as cleanup_error:
+            logger.warning(f"[{job_id}] GPU sync after failure failed: {cleanup_error}")
+
         logger.exception(f"[{job_id}] Image generation failed")
         state.mark_failed(job_id, str(e))
         raise
@@ -284,6 +297,7 @@ def execute_video_job(
                 "duration_seconds": params["duration_seconds"],
                 "num_inference_steps": params["num_inference_steps"],
                 "guidance_scale": params["guidance_scale"],
+                "model_id": generator.model_id if hasattr(generator, "model_id") else None,
             },
             "outputs": {
                 "video": "output.mp4",
@@ -329,6 +343,17 @@ def execute_video_job(
         raise
 
     except Exception as e:
+        # Cleanup GPU before propagating exception to prevent state accumulation
+        try:
+            import torch
+            if torch.cuda.is_available():
+                logger.info(f"[{job_id}] Synchronizing GPU after failure...")
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                logger.info(f"[{job_id}] GPU synchronized successfully")
+        except Exception as cleanup_error:
+            logger.warning(f"[{job_id}] GPU sync after failure failed: {cleanup_error}")
+
         logger.exception(f"[{job_id}] Video generation failed")
         state.mark_failed(job_id, str(e))
         raise
