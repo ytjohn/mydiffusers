@@ -13,6 +13,9 @@ We use bd (beads) for issue tracking instead of Markdown TODOs or external tools
 ### Quick Reference
 
 ```bash
+# list work, including in progress
+bd list --json
+
 # Find ready work (no blockers)
 bd ready --json
 
@@ -638,13 +641,40 @@ def my_function():
 - Video VAE decode has gfx1151 stability issues
 - Avoid flash-attention or untested SDP backends
 
-### 4. uv sync / pip install torch might replaces rocm wheels
+### 4. uv sync / pip install torch might replace rocm wheels
 
-**Sympton:** Python / Torch unable to detect rocm GPU
+**Status:** ⚠️ **PARTIALLY FIXED** - pytorch-rocm nightly index has broken triton dependencies (as of 2026-01-04)
 
-Sometimes `uv run` or `uv sync` ran incorrectly will install torch wheels not compiled for rocm.  The @scripts/install-rocm.sh installs torch wheels in a specific order.
+**Symptom:** Python / Torch unable to detect ROCm GPU, or `uv sync` fails with missing triton-rocm dependencies
 
-**Dectection:**
+**Issue Evolution:**
+1. **Initial problem (pre-2026-01-04):** `uv sync` would replace ROCm wheels with CUDA versions
+2. **First fix:** Added `[tool.uv.sources]` to pin torch to pytorch-rocm index
+3. **New problem (2026-01-04 post-reboot):** pytorch-rocm nightly index has missing triton-rocm dependencies
+   - torch depends on specific triton-rocm versions (3.5.1+gitbfeb0668, 3.6.0+git8fedd49b, etc.)
+   - These triton wheels don't exist in the index
+   - `uv sync` fails with "No solution found when resolving dependencies"
+
+**Current Solution (2026-01-04):**
+
+Bypass uv's dependency resolver entirely by installing torch explicitly and removing it from managed dependencies:
+
+1. **scripts/install-rocm.sh** - Explicitly installs torch ROCm first, then manually installs each dependency
+   - `uv pip install --pre torch==2.11.0.dev20260102` from ROCm index
+   - Manual `uv pip install` for each dependency (accelerate, diffusers, etc.)
+   - Avoids `uv sync` which would replace torch
+
+2. **pyproject.toml** - torch removed from `[dependencies]` section
+   - Torch is only installed by install-rocm.sh
+   - No `[tool.uv.sources]` for torch (not needed with explicit install)
+   - Transformers still from GitHub main (for Qwen2-VL)
+
+This works because:
+- torch is installed first from the ROCm index wheel (which bundles triton or doesn't need it)
+- Other dependencies see torch is already satisfied and don't try to reinstall it
+- No dependency resolution that would discover the missing triton packages
+
+**Detection:**
 
 ```shell
 python -c "import torch; print(f'torch: {torch.__version__}'); print(f'hip: {torch.version.hip}'); print(f'cuda: {torch.version.cuda}')"
@@ -653,9 +683,11 @@ hip: 7.1.52802
 cuda: None
 ```
 
-If torch does not show "+rocm" then hip will be empty. "cuda" should be "None".
+If torch doesn't show "+rocm" then hip will be empty and "cuda" should be "None".
 
-**Remediation**
+**If Broken After New Package Install:**
+
+Always use `./scripts/install-rocm.sh` instead of `uv sync` or `uv pip install`:
 
 ```shell
 uv pip uninstall torch torchvision torchaudio

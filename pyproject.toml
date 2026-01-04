@@ -16,6 +16,7 @@ dependencies = [
     "pillow>=12.0.0",
     "python-multipart>=0.0.9",
     "qwen-vl-utils>=0.0.8",
+    # torch/torchvision/torchaudio installed explicitly by install-rocm.sh
     "transformers>=4.57.3",
     "uvicorn>=0.40.0",
 ]
@@ -75,3 +76,14 @@ module = [
     "imageio.*",
 ]
 ignore_missing_imports = true
+
+[tool.uv]
+# Allow pre-release/nightly versions
+prerelease = "allow"
+
+# Note: torch/torchvision/torchaudio are installed explicitly by install-rocm.sh
+# to bypass broken triton-rocm dependencies in the nightly index
+
+# Install transformers from GitHub main (required for Qwen2-VL support)
+[tool.uv.sources]
+transformers = { git = "https://github.com/huggingface/transformers", branch = "main" }
