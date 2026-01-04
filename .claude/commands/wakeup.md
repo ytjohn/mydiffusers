@@ -1,0 +1,1 @@
+If you have not already, read AGENTS.md and us beads (bd) to find current task.
