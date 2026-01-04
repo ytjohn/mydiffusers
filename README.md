@@ -58,73 +58,97 @@ Reboot and verify with `dmesg | grep -i "GTT memory"`.
 # Clone and enter project
 cd mydiffuser
 
-# Create virtual environment
-uv venv
-source .venv/bin/activate
+# Install dependencies and ROCm PyTorch
+./scripts/install-rocm.sh
 
-# Install PyTorch with ROCm (nightly for gfx1201 support)
+# Run client (web UI) and worker (GPU inference) separately
 
-# This MUST be done before doing a uv sync or pip install. 
+# Terminal 1: Start worker (GPU inference server)
+./scripts/run.sh scripts/run_worker.py
 
-# from a clean venv
-uv pip uninstall  torch torchvision torchaudio || true
-uv pip install --pre torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+# Terminal 2: Start client (web UI)
+./scripts/run.sh scripts/run_client.py
 
-
-
-# Install the project in editable mode
-uv pip install -e .
-
-# Run the server (image generation only)
-python scripts/run_server.py
-
-# Run with video generation enabled (requires more VRAM)
-MYDIFFUSER_VIDEO=1 python scripts/run_server.py
-
-# Run with lazy loading (swaps models on demand, uses less memory)
-MYDIFFUSER_LAZY=1 MYDIFFUSER_VIDEO=1 python scripts/run_server.py
+# Or run both in one terminal (for development)
+./scripts/run.sh scripts/run_client.py &
+./scripts/run.sh scripts/run_worker.py
 ```
 
-The server starts at `http://localhost:8000`. Open it in a browser for the web UI.
+The **client** (web UI) starts at `http://localhost:8000`
+The **worker** (GPU inference) runs at `http://localhost:8001`
 
-## Web UI
+> ⚠️ **Important**: Always use `./scripts/run.sh` instead of `uv run` or direct `python` commands. `uv run` will replace ROCm torch with CUDA version!
+
+## Architecture
+
+MyDiffuser uses a **client/worker split**:
+
+- **Client (port 8000)**: GPU-free web UI server
+  - Lightweight FastAPI server for web interface
+  - SQLite database for job tracking and history
+  - No PyTorch/GPU dependencies
+  - Safe to run on any machine
+
+- **Worker (port 8001+)**: GPU inference server
+  - Loads diffusion models and runs inference
+  - Can run on same machine or remote GPU server
+  - Handles model loading, generation, and unloading
+  - One or more workers can serve multiple clients
+
+## Web UI (Client - port 8000)
 
 | Page | URL | Description |
 |------|-----|-------------|
 | Image Generator | `/` | Text-to-image generation |
-| Video Generator | `/video` | Image-to-video generation |
+| Video Generator | `/generate/video` | Image-to-video generation |
 | Browse History | `/browse` | View, filter, and remix past generations |
 | Prompt Assistant | `/assist` | AI-powered prompt improvement with Qwen2-VL |
 | Health Dashboard | `/health-dashboard` | Monitor worker status and GPU usage |
 
 ## API Endpoints
 
+### Client Endpoints (port 8000)
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Web UI for image generation |
-| `/video` | GET | Web UI for video generation |
+| `/generate/video` | GET | Web UI for video generation |
 | `/browse` | GET | Browse past generations |
-| `/health` | GET | Server status and configuration |
-| `/generate` | POST | Generate image, return JSON metadata |
-| `/generate_image` | POST | Generate image, return PNG bytes |
-| `/generate_video` | POST | Generate video from image |
-| `/api/runs` | GET | List runs (supports `?type=image|video|all`) |
-| `/api/runs/{id}` | GET | Get run details |
-| `/api/runs/{id}/thumb` | GET | Get run thumbnail |
-| `/api/runs/{id}/image` | GET | Get output image |
-| `/api/runs/{id}/video` | GET | Get output video |
-| `/api/runs/{id}` | DELETE | Delete a run |
+| `/assist` | GET | Prompt assistant UI |
+| `/health-dashboard` | GET | Worker monitoring UI |
+| `/health` | GET | Client health check |
+| `/api/jobs/image` | POST | Submit image generation job |
+| `/api/jobs/video` | POST | Submit video generation job |
+| `/api/jobs` | GET | List all jobs |
+| `/api/jobs/{id}` | GET | Get job status |
+| `/api/jobs/{id}/cancel` | POST | Cancel running job |
+| `/api/estimate` | POST | Estimate VRAM and time for generation |
+| `/api/workers` | GET | List available workers |
+| `/api/workers/{id}/health` | GET | Get worker health (proxied) |
+| `/api/workers/{id}/unload/{model_type}` | POST | Unload model |
 | `/api/assist/analyze` | POST | Analyze image and get prompt suggestions |
 | `/api/assist/sessions` | GET | List prompt assistant sessions |
 | `/api/assist/sessions/{id}` | GET | Get session conversation history |
 | `/api/assist/sessions/{id}/resolve` | POST | Mark session as resolved |
 
+### Worker Endpoints (port 8001+)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Worker health and GPU status |
+| `/capabilities` | GET | Get worker capabilities |
+| `/generate_image` | POST | Generate image (direct) |
+| `/generate_video` | POST | Generate video (direct) |
+| `/assist/analyze` | POST | Prompt analysis (direct) |
+| `/jobs/{id}` | GET | Get job status |
+| `/jobs/{id}/cancel` | POST | Cancel job |
+| `/unload/{model_type}` | POST | Unload model |
+
 ### Example API Calls
 
-**Generate an image:**
+**Submit an image generation job:**
 ```bash
-curl -X POST http://localhost:8000/generate \
+curl -X POST http://localhost:8000/api/jobs/image \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "A photorealistic cat wearing a tiny hat",
@@ -133,16 +157,16 @@ curl -X POST http://localhost:8000/generate \
   }'
 ```
 
-**Generate a video from an image run:**
+**Submit a video generation job:**
 ```bash
-curl -X POST http://localhost:8000/generate_video \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_run_id": "20251226-123456-abcd1234",
-    "prompt": "subtle head turn, gentle breathing",
-    "preset": "draft",
-    "seed": 42
-  }'
+curl -X POST http://localhost:8000/api/jobs/video \
+  -F "image=@path/to/image.png" \
+  -F 'request={"prompt": "subtle head turn, gentle breathing", "preset": "draft", "seed": 42}'
+```
+
+**Check job status:**
+```bash
+curl http://localhost:8000/api/jobs/{job_id}
 ```
 
 ## Prompt Assistant
@@ -168,13 +192,9 @@ The Prompt Assistant uses Qwen2-VL-2B vision-language model to help you improve 
 7. Upload your next iteration to continue the conversation
 8. Mark the session as resolved when you're satisfied
 
-### Architecture
+### How It Works
 
-The assistant uses a **client/worker split**:
-- **Client** (port 8000): GPU-free UI server with web interface and SQLite database
-- **Worker** (port 8001+): GPU inference server that loads Qwen2-VL on-demand
-
-The worker loads Qwen2-VL-2B lazily (~4GB VRAM) and can coexist with the image generator (~34GB total). It will be unloaded when video generation is requested to free up memory.
+The Qwen2-VL-2B model (~4GB VRAM) runs on the worker and loads on-demand when you visit `/assist`. It can coexist with the image generator (~34GB total: 30GB + 4GB). The worker will automatically unload models when switching between types to manage memory.
 
 ### Memory Requirements
 
@@ -287,25 +307,20 @@ DTYPE = torch.bfloat16    # Options: float32 (slow/safe), bfloat16 (balanced), f
 - `torch.bfloat16`: Good balance of speed and stability (recommended)
 - `torch.float16`: Fastest but may cause memory faults on some workloads
 
-### Loading Strategy
+### Configuration
 
 **Environment variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MYDIFFUSER_VIDEO` | `0` | Set to `1` to enable video generation |
+| `MYDIFFUSER_VIDEO` | `0` | Set to `1` to enable video generation in worker |
 | `MYDIFFUSER_LAZY` | `0` | Set to `1` to enable lazy loading (model swapping) |
+| `MYDIFFUSER_VAE_DEVICE` | `cuda` | VAE device (`cpu` for gfx1151 workaround) |
+| `MYDIFFUSER_DTYPE` | `bf16` | Main dtype: `fp32`, `bf16`, `fp16` |
 
-**Eager loading (default):**
-- Both models load at startup
-- Fast switching between image and video generation
-- Requires ~60GB GPU memory for both
-
-**Lazy loading (`MYDIFFUSER_LAZY=1`):**
-- Models load on first request
-- When switching from image→video (or vice versa), the old model is unloaded first
-- Only requires ~30GB GPU memory at any time
-- First request of each type has model loading latency (~30-60s)
+**Loading strategies:**
+- **Eager** (default): Both models load at startup (~60GB needed)
+- **Lazy**: Models swap on demand (~30GB needed, adds loading latency)
 
 ## Output Structure
 
@@ -365,45 +380,64 @@ mydiffuser/
 │   │   ├── image.py           # Z-Image-Turbo text-to-image
 │   │   └── video/
 │   │       ├── base.py        # Abstract video generator
-│   │       └── wan.py         # Wan2.1 image-to-video
+│   │       └── wan.py         # Wan2.2 image-to-video
 │   ├── models/
 │   │   ├── requests.py        # Pydantic request models
 │   │   └── responses.py       # Pydantic response models
-│   ├── server/
+│   ├── inference/             # Worker-side model management
+│   │   ├── state.py           # Global state (generators, locks)
+│   │   ├── assistant.py       # Qwen2-VL prompt assistant
+│   │   ├── image.py           # Z-Image Turbo generator
+│   │   └── video/
+│   │       └── wan.py         # Wan2.2 I2V generator
+│   ├── client/                # Client-side (GPU-free)
 │   │   ├── app.py             # FastAPI app factory
-│   │   ├── state.py           # Global state (loaded models)
-│   │   ├── ui.py              # Image generation UI
-│   │   ├── video_ui.py        # Video generation UI
-│   │   ├── browse_ui.py       # Browse history UI
+│   │   ├── database.py        # SQLite CRUD operations
+│   │   ├── worker_client.py   # HTTP client for workers
+│   │   ├── routes.py          # Job submission endpoints
+│   │   ├── ui.py              # Image generation web UI
+│   │   ├── assist_ui.py       # Prompt assistant UI
+│   │   ├── browse_ui.py       # Run history browser
+│   │   ├── health_ui.py       # Worker health dashboard
+│   │   └── templates/         # Jinja2 HTML templates
+│   ├── worker/                # Worker-side (GPU inference)
+│   │   ├── app.py             # FastAPI app factory
 │   │   └── routes/
-│   │       ├── health.py      # /health endpoint
-│   │       ├── image.py       # /generate, /generate_image
+│   │       ├── health.py      # Health check endpoint
+│   │       ├── image.py       # /generate_image
 │   │       ├── video.py       # /generate_video
-│   │       └── browse.py      # /api/runs endpoints
+│   │       └── assist.py      # /assist/analyze
 │   └── utils/
 │       ├── paths.py           # Run directory management
 │       └── presets.py         # Generation presets
 ├── scripts/
-│   └── run_server.py          # Entry point
+│   ├── install-rocm.sh        # Install ROCm PyTorch
+│   ├── run.sh                 # Wrapper to run with ROCm preserved
+│   ├── run_client.py          # Start client server
+│   └── run_worker.py          # Start worker server
 ├── outputs/                   # Generated content (gitignored)
-└── archive/                   # Old experimental files
+└── docs/                      # Documentation
 ```
 
 ## Development
 
 ```bash
-# Install dev dependencies
-uv pip install -e ".[dev]"
-
-# Run linter
+# Run linter (20 acceptable warnings documented in AGENTS.md)
 ruff check src/
-
-# Run type checker
-mypy src/mydiffuser
 
 # Auto-fix lint issues
 ruff check src/ --fix
+
+# Run type checker (optional)
+mypy src/mydiffuser
 ```
+
+**Note**: See `AGENTS.md` for comprehensive development guidelines including:
+- Issue tracking with bd (beads)
+- Code quality standards
+- ROCm/gfx1151 specific considerations
+- Client/worker architecture details
+- Common pitfalls for AI agents
 
 ## Troubleshooting
 
