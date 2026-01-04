@@ -1,6 +1,12 @@
 # mydiffuser
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**Experimental playground for image and video generation on AMD Framework Desktop (ROCm/gfx1151)**
+
 Image and video generation server optimized for AMD GPUs (ROCm).
+
+> ⚠️ **Experimental Project**: This is a personal playground for experimenting with diffusion models on AMD ROCm, specifically tested on Framework Desktop with AMD Max+ 395 (gfx1151). Expect rough edges, hardware-specific quirks, and frequent changes.
 
 Supports:
 - **Z-Image-Turbo** for text-to-image generation
