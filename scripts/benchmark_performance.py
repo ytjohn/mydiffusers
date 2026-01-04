@@ -38,6 +38,7 @@ import argparse
 import asyncio
 import csv
 import json
+import random
 import sqlite3
 import sys
 import time
@@ -51,6 +52,8 @@ import httpx
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+def randomSeed():
+    return random.randint(20, 999999)
 
 @dataclass
 class BenchmarkConfig:
@@ -76,13 +79,17 @@ class BenchmarkConfig:
     # Control
     test_images: bool = True
     test_videos: bool = False  # Slow, opt-in
-    seed: int = 42
+    # seed: int = 42
+    # make seed a random number for each run between 1 and 100
+    seed: int = randomSeed()
     batch_size: int | None = None  # None = all, or set to N for testing
     output_dir: Path = field(default_factory=lambda: Path("benchmark_output"))
 
     # Prompts
-    image_prompt: str = "a red cube on a blue surface"
-    video_prompt: str = "the cube rotates slowly"
+    image_prompt: str = "dc comics animation realistic style. batman hacking" \
+    " on a computer in a datacenter while fending off female and male villain distractions. " \
+    " computer screens are visible"
+    video_prompt: str = "the shadows grow longer"
 
 
 class PerformanceBenchmark:
@@ -305,7 +312,7 @@ class PerformanceBenchmark:
                     "height": height,
                     "steps": steps,
                     "guidance": guidance,
-                    "seed": self.config.seed,
+                    "seed": randomSeed(),
                     "tags": json.dumps(["benchmark"]),
                 },
             )
@@ -364,7 +371,7 @@ class PerformanceBenchmark:
                     "height": height,
                     "steps": 6,
                     "guidance": 0.3,
-                    "seed": self.config.seed,
+                    "seed": randomSeed(),
                     "tags": json.dumps(tags),
                 },
             )
@@ -393,7 +400,7 @@ class PerformanceBenchmark:
                     "steps": steps,
                     "guidance": 3.0,
                     "resolution": "480p" if width == 832 else "720p",
-                    "seed": self.config.seed,
+                    "seed": randomSeed(),
                     "tags": json.dumps(["benchmark"]),
                 },
             )
@@ -402,13 +409,25 @@ class PerformanceBenchmark:
             return data["job_id"]
 
     async def poll_job_completion(
-        self, job_id: str, silent: bool = False
+        self, job_id: str, silent: bool = False, max_wait: int = 600
     ) -> dict[str, Any]:
-        """Poll until job completes, return metadata"""
+        """Poll until job completes, return metadata
+
+        Args:
+            job_id: Job ID to poll
+            silent: If True, don't print progress dots
+            max_wait: Maximum time to wait in seconds (default 600 = 10 min)
+        """
         poll_interval = 2.0  # seconds
+        start_time = time.time()
 
         while True:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            # Check if we've exceeded max wait time
+            elapsed = time.time() - start_time
+            if elapsed > max_wait:
+                raise TimeoutError(f"Job {job_id} did not complete within {max_wait}s")
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
                     f"{self.config.client_url}/api/jobs/{job_id}"
                 )
@@ -487,8 +506,9 @@ class PerformanceBenchmark:
         print("loading...", end=" ", flush=True)
         try:
             # Submit smallest possible job (480p, 1 step for fastest load)
+            # Allow up to 120s for model loading (first load can be slow)
             job_id = await self.submit_image_job(832, 480, 1, 0.3)
-            await self.poll_job_completion(job_id, silent=True)
+            await self.poll_job_completion(job_id, silent=True, max_wait=120)
             print("✓")
         except Exception as e:
             # Model may have loaded even if we got an error
@@ -520,8 +540,9 @@ class PerformanceBenchmark:
                 raise RuntimeError("Failed to generate source image for warmup")
 
             # Submit smallest possible video job (480p, 3s, 15 steps)
+            # Allow up to 300s for model loading (video models are large, first load with MIOpen compile can be very slow)
             job_id = await self.submit_video_job(832, 480, 3, 15, source_run_id)
-            await self.poll_job_completion(job_id, silent=True)
+            await self.poll_job_completion(job_id, silent=True, max_wait=300)
             print("✓")
         except Exception as e:
             # Model may have loaded even if we got an error
@@ -1079,6 +1100,7 @@ async def main():
         import traceback
         traceback.print_exc()
         return 1
+
 
 
 if __name__ == "__main__":
