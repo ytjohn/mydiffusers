@@ -123,6 +123,7 @@ async function updateWorkerCapabilities() {
 
                 const caps = await response.json();
                 const availableModels = caps.video_models || [];
+                const hasVideoCapability = caps.job_types && caps.job_types.includes('video');
 
                 // Update model dropdown based on capabilities
                 const modelOptions = modelSelect.querySelectorAll('option');
@@ -140,8 +141,8 @@ async function updateWorkerCapabilities() {
                 });
 
                 // Update info text
-                if (availableModels.length === 0) {
-                    modelInfo.textContent = 'No video models available on this worker';
+                if (!hasVideoCapability || availableModels.length === 0) {
+                    modelInfo.textContent = 'Video generation is disabled on this worker';
                     modelInfo.style.color = '#f85149';
                 } else {
                     const platform = caps.platform || 'unknown';
@@ -160,11 +161,66 @@ async function updateWorkerCapabilities() {
             }
 }
 
+// Check if ANY worker has video capability
+async function checkForVideoCapableWorkers() {
+            const warningDiv = document.getElementById('noVideoWorkersWarning');
+            const submitButton = document.querySelector('button[type="submit"]');
+
+            try {
+                // Fetch all workers
+                const response = await fetch('/api/workers');
+                if (!response.ok) {
+                    console.error('Failed to fetch workers');
+                    return;
+                }
+
+                const data = await response.json();
+                const workers = data.workers || [];
+
+                // Check each worker for video capability
+                let hasVideoWorker = false;
+                for (const worker of workers) {
+                    try {
+                        const capsResponse = await fetch(`/api/workers/${worker.id}/capabilities`);
+                        if (capsResponse.ok) {
+                            const caps = await capsResponse.json();
+                            if (caps.job_types && caps.job_types.includes('video')) {
+                                hasVideoWorker = true;
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to check capabilities for worker ${worker.id}:`, e);
+                    }
+                }
+
+                // Show/hide warning and enable/disable submit button
+                if (!hasVideoWorker) {
+                    warningDiv.style.display = 'block';
+                    submitButton.disabled = true;
+                    submitButton.style.opacity = '0.5';
+                    submitButton.style.cursor = 'not-allowed';
+                    submitButton.title = 'No workers with video capability available';
+                } else {
+                    warningDiv.style.display = 'none';
+                    submitButton.disabled = false;
+                    submitButton.style.opacity = '1';
+                    submitButton.style.cursor = 'pointer';
+                    submitButton.title = '';
+                }
+            } catch (error) {
+                console.error('Error checking for video-capable workers:', error);
+            }
+}
+
 // Update capabilities on worker change
 document.getElementById('worker').addEventListener('change', updateWorkerCapabilities);
 
 // Load capabilities on page load
 updateWorkerCapabilities();
+
+// Check for video-capable workers on page load
+checkForVideoCapableWorkers();
 
 // Add event listeners for real-time estimates
 ['duration', 'fps', 'vsteps', 'vguidance', 'resolution'].forEach(id => {

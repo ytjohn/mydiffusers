@@ -8,17 +8,17 @@ DEFAULT_LOCAL_WORKER = os.environ.get("MYDIFFUSER_LOCAL_WORKER", "http://localho
 DEFAULT_REMOTE_WORKER = os.environ.get("MYDIFFUSER_REMOTE_WORKER", "http://localhost:8002")
 
 # Worker configuration
+# Note: Capabilities are queried dynamically from each worker's /capabilities endpoint
+# Do not hardcode capabilities here as they depend on worker configuration (VIDEO_ENABLED, etc)
 WORKERS = {
     "local": {
         "name": "Local Worker",
         "endpoint": DEFAULT_LOCAL_WORKER,
-        "capabilities": ["image", "video"],
         "description": "Local GPU (AMD Framework Desktop)",
     },
     "remote": {
         "name": "Remote Worker",
         "endpoint": DEFAULT_REMOTE_WORKER,
-        "capabilities": ["image", "video"],
         "description": "Remote GPU (Lambda Labs via SSH tunnel)",
     },
 }

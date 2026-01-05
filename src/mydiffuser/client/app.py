@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from mydiffuser import __version__
-from mydiffuser.config import ensure_output_dirs, VIDEO_ENABLED
+from mydiffuser.config import ensure_output_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,6 @@ CLIENT_DIR = Path(__file__).parent
 STATIC_DIR = CLIENT_DIR / "static"
 TEMPLATES_DIR = CLIENT_DIR / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-
-# Make VIDEO_ENABLED available in all templates
-templates.env.globals["VIDEO_ENABLED"] = VIDEO_ENABLED
 
 
 @asynccontextmanager

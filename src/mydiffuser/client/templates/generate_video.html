@@ -211,6 +211,18 @@
             <strong>Note:</strong> Video generation requires a source image. Upload an image and add a prompt describing the motion/animation you want.
         </div>
 
+        <div id="noVideoWorkersWarning" style="display: none; margin: 20px 0; padding: 15px; background: rgba(255, 123, 114, 0.1); border: 1px solid #ff7b72; border-radius: 6px; color: #ff7b72;">
+            <strong>⚠ No Video-Capable Workers Available</strong><br>
+            <span style="font-size: 14px; color: #e6edf3;">
+                Video generation is currently disabled on all connected workers.
+                To enable video generation:
+                <ul style="margin-top: 8px; margin-left: 20px; color: #8b949e;">
+                    <li>Set <code style="background: #0d1117; padding: 2px 6px; border-radius: 3px;">MYDIFFUSER_VIDEO=1</code> on a worker</li>
+                    <li>Or connect to a worker with video capabilities (e.g., Lambda GPU instance)</li>
+                </ul>
+            </span>
+        </div>
+
         <div class="layout-two-column">
             <!-- LEFT: Source Panel -->
             <div class="source-panel">
