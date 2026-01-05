@@ -55,6 +55,46 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def randomSeed():
     return random.randint(20, 999999)
 
+
+def batman_prompt_factory() -> str:
+    """Generate varied Batman scenarios for visually interesting benchmarks.
+
+    Prompt content/length doesn't affect timing (verified), but adds visual variety.
+    """
+    scenarios = [
+        "batman swinging through Gotham City on a grappling hook",
+        "batman confronting the Joker in an abandoned warehouse",
+        "batman standing on a rooftop overlooking the city at night",
+        "batman investigating a crime scene with detective tools",
+        "batman driving the Batmobile at high speed through city streets",
+        "batman fighting Bane in the underground sewers",
+        "batman meeting Commissioner Gordon on the GCPD rooftop",
+        "batman infiltrating Arkham Asylum past security",
+        "batman gliding between skyscrapers with his cape",
+        "batman working in the Batcave with computer screens",
+        "batman facing off against Scarecrow in a nightmare sequence",
+        "batman rescuing hostages from Two-Face's hideout",
+        "batman pursuing Catwoman across Gotham rooftops",
+        "batman analyzing forensic evidence in his laboratory",
+        "batman defending Wayne Manor from intruders",
+        "batman hacking on a computer in a datacenter while fending off villain distractions",
+        "batman training in the Batcave gym with advanced equipment",
+        "batman standing in the rain on a Gothic cathedral",
+        "batman examining the Bat-Signal in the cloudy night sky",
+        "batman confronting Penguin in the Iceberg Lounge",
+        "batman disarming a bomb with precise movements",
+        "batman interrogating a criminal in a dark alley",
+        "batman emerging from shadows in a dimly lit warehouse",
+        "batman riding the Batcycle through narrow city alleys",
+    ]
+
+    scenario = random.choice(scenarios)
+
+    # Consistent style suffix for quality
+    style = "dramatic lighting, high detail, intricate, sharp focus, digital art"
+
+    return f"dc comics animation realistic style. {scenario}. {style}"
+
 @dataclass
 class BenchmarkConfig:
     """Configuration for benchmark run"""
@@ -100,11 +140,7 @@ class BenchmarkConfig:
     batch_size: int | None = None  # None = all, or set to N for testing
     output_dir: Path = field(default_factory=lambda: Path("benchmark_output"))
 
-    # Prompts
-    image_prompt: str = "dc comics animation realistic style. batman hacking" \
-    " on a computer in a datacenter while fending off female and male villain distractions. " \
-    " computer screens are visible. dramatic lighting, " \
-    " high detail, intricate, sharp focus, digital art"
+    # Video prompt (images use batman_prompt_factory() for variety)
     video_prompt: str = "the shadows grow longer"
 
 
@@ -322,7 +358,7 @@ class PerformanceBenchmark:
             response = await client.post(
                 f"{self.config.client_url}/api/jobs/image",
                 data={
-                    "prompt": self.config.image_prompt,
+                    "prompt": batman_prompt_factory(),
                     "worker": self.config.worker_name,
                     "width": width,
                     "height": height,
@@ -381,7 +417,7 @@ class PerformanceBenchmark:
             response = await client.post(
                 f"{self.config.client_url}/api/jobs/image",
                 data={
-                    "prompt": self.config.image_prompt,
+                    "prompt": batman_prompt_factory(),
                     "worker": self.config.worker_name,
                     "width": width,
                     "height": height,
