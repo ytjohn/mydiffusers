@@ -122,7 +122,7 @@ fi
 echo "GPU responsive, starting worker on port 8001 in screen session..."
 # Note: Worker will detect GPU at startup. If GPU hangs during detection, reboot required.
 # GPU detection happens in config.py when worker imports PyTorch modules.
-screen -dmS worker bash -c "python scripts/run_worker.py --port 8001 2>&1 | tee /tmp/worker.log"
+screen -dmS worker bash -c "python scripts/run_worker.py --port 8001 2>&1 | tee outputs/logs/worker.log"
 
 sleep 3
 
@@ -130,11 +130,11 @@ echo "Worker started in screen session 'worker'"
 echo "Checking health..."
 curl -s http://localhost:8001/health | python3 -m json.tool || echo "Worker not responding yet (may still be starting up)"
 
-tail -10 /tmp/worker.log
+tail -10 outputs/logs/worker.log
 
 
 echo ""
 echo "To attach to worker session: screen -r worker"
 echo "To detach from session: Ctrl+A then D"
-echo "Logs: tail -f /tmp/worker.log"
+echo "Logs: tail -f outputs/logs/worker.log"
 

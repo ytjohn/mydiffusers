@@ -202,10 +202,10 @@ watch -n 2 "ps aux | awk '\$8 ~ /D/ {print}'"
 ### Worker Logs
 ```bash
 # Check for GPU detection failures
-grep -i "gpu.*fail" /tmp/worker.log
+grep -i "gpu.*fail" outputs/logs/worker.log
 
 # Check for hung operations
-tail -f /tmp/worker.log
+tail -f outputs/logs/worker.log
 ```
 
 ## When to Reboot

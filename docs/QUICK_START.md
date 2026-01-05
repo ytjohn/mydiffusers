@@ -22,7 +22,7 @@ bash scripts/restart-client.sh
 ### Test Lazy Loading Carefully
 ```bash
 # 1. Check worker started cleanly
-tail -f /tmp/worker.log
+tail -f outputs/logs/worker.log
 # Should show: "Worker startup complete" and "Models will load lazily on first request"
 
 # 2. Submit ONE image job via http://localhost:8000/generate/image
@@ -40,10 +40,10 @@ tail -f /tmp/worker.log
 ## Logs
 ```bash
 # Worker logs
-tail -f /tmp/worker.log
+tail -f outputs/logs/worker.log
 
 # Client logs
-tail -f /tmp/client.log
+tail -f outputs/logs/client.log
 ```
 
 ## Stop Services

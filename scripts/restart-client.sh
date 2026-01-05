@@ -31,14 +31,14 @@ echo "Starting client on port 8000 in screen session..."
 # Set flag to skip GPU detection (prevents hangs on broken GPU drivers)
 
 export MYDIFFUSER_SKIP_GPU_DETECT=1
-screen -dmS client bash -c "export MYDIFFUSER_SKIP_GPU_DETECT=1; python3 scripts/run_client.py --host 0.0.0.0 --port 8000 2>&1 | tee /tmp/client.log"
+screen -dmS client bash -c "export MYDIFFUSER_SKIP_GPU_DETECT=1; python3 scripts/run_client.py --host 0.0.0.0 --port 8000 2>&1 | tee outputs/logs/client.log"
 
 sleep 2
 
 echo "Client started in screen session 'client'"
 echo "Checking health..."
 curl -s http://localhost:8000/health | python3 -m json.tool || echo "Client not responding yet"
-tail -10 /tmp/client.log
+tail -10 outputs/logs/client.log
 echo ""
 echo "Client UI: http://localhost:8000/"
 echo "Local Network http://$(hostname -I | awk '{print $1}'):8000/ (if running on local network)"
@@ -47,5 +47,5 @@ echo "To attach to client session: "
 echo  "screen -r client"
 echo "To detach from session: Ctrl+A then D"
 echo "Logs: "
-echo "tail -f /tmp/client.log"
+echo "tail -f outputs/logs/client.log"
 

@@ -91,7 +91,8 @@ CODE_DIR="$HOME/code"
 
 # Start worker in a detached screen session
 echo "Starting worker in screen session 'worker' on port $REMOTE_PORT..."
-screen -dmS worker bash -c "cd $CODE_DIR && source .venv/bin/activate && python scripts/run_worker.py --port $REMOTE_PORT 2>&1 | tee /tmp/worker.log"
+mkdir -p $CODE_DIR/outputs/logs
+screen -dmS worker bash -c "cd $CODE_DIR && source .venv/bin/activate && python scripts/run_worker.py --port $REMOTE_PORT 2>&1 | tee outputs/logs/worker.log"
 
 # Give it a moment to start
 sleep 3
@@ -108,15 +109,15 @@ for i in {1..10}; do
         echo "  (Press Ctrl+A then D to detach without stopping)"
         echo ""
         echo "Or view log file:"
-        echo "  ssh ${TARGET_HOST} 'tail -f /tmp/worker.log'"
+        echo "  ssh ${TARGET_HOST} 'tail -f $CODE_DIR/outputs/logs/worker.log'"
         exit 0
     fi
     sleep 1
 done
 
-echo "⚠️  Worker may still be starting. Check logs with: tail -f /tmp/worker.log"
+echo "⚠️  Worker may still be starting. Check logs with: tail -f $CODE_DIR/outputs/logs/worker.log"
 echo "Last 20 lines of log:"
-tail -20 /tmp/worker.log 2>/dev/null || echo "Log file not created yet"
+tail -20 $CODE_DIR/outputs/logs/worker.log 2>/dev/null || echo "Log file not created yet"
 REMOTE_START
 
 echo "✓ Worker started"
@@ -151,7 +152,7 @@ echo "  4. Submit a job via the UI and select 'remote' worker"
 echo ""
 echo "To check worker logs:"
 echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t ${TARGET_HOST} 'screen -r worker'  # Live view (Ctrl+A D to detach)"
-echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${TARGET_HOST} 'tail -f /tmp/worker.log'  # Log file"
+echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${TARGET_HOST} 'tail -f $CODE_DIR/outputs/logs/worker.log'  # Log file"
 echo ""
 echo "To stop the remote worker:"
 echo "  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${TARGET_HOST} 'screen -S worker -X quit'"

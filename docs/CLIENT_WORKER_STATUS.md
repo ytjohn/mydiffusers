@@ -279,7 +279,7 @@ bash scripts/restart-client.sh
 ```bash
 # After reboot, test carefully:
 1. Start worker: bash scripts/restart-worker.sh
-2. Check logs: tail -f /tmp/worker.log
+2. Check logs: tail -f outputs/logs/worker.log
 3. Wait for "Worker startup complete" (should be instant now)
 4. Submit ONE image job via client UI
 5. Watch logs for lazy model load
@@ -303,7 +303,7 @@ bash scripts/restart-client.sh
    - Should show "running_job": "<job-id>"
 
 4. Watch worker logs for queue behavior:
-   tail -f /tmp/worker.log
+   tail -f outputs/logs/worker.log
    - Should see: "[job1] Starting image job (queue size: 1)"
    - After job1 completes: "[job2] Starting image job (queue size: 0)"
 
@@ -398,8 +398,8 @@ export MYDIFFUSER_LAZY=1
 ## References
 
 - Original plan: `~/.claude/plans/cheerful-dancing-cherny.md`
-- Worker logs: `/tmp/worker.log`
-- Client logs: `/tmp/client.log`
+- Worker logs: `outputs/logs/worker.log`
+- Client logs: `outputs/logs/client.log`
 - Old server: `scripts/run_server.py` (still works)
 
 ---
@@ -444,7 +444,7 @@ export MYDIFFUSER_LAZY=1
 bash scripts/restart-worker.sh
 
 # 2. Check logs for inference.state (not server.state)
-tail -f /tmp/worker.log | grep -E "inference\.|Loading"
+tail -f outputs/logs/worker.log | grep -E "inference\.|Loading"
 
 # 3. Test image generation via client UI
 # 4. Test video generation via client UI
