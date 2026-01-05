@@ -43,7 +43,7 @@ class JobEstimator:
             "1280x704@36frames@15steps": 2132.0,  # Your actual measurement (35.5 min)
         },
         "qwen2-vl-7b": {
-            "default": 300  # seconds for typical query
+            "default": 30  # seconds for typical query (Qwen2-VL-2B is fast)
         },
     }
 
@@ -241,8 +241,9 @@ class JobEstimator:
         scaling_factor = (current_pixels / base_pixels) ** 0.8
         vram_total = base_vram * scaling_factor
 
-        # Time estimation - use default 300s for assistant queries
-        time_estimate = 300
+        # Time estimation - Qwen2-VL-2B is fast, typically 10-30s per analysis
+        # Use 30s as reasonable default (was 300s which is too conservative)
+        time_estimate = 30
 
         return JobEstimate(
             vram_total_needed=vram_total,
@@ -255,7 +256,12 @@ class JobEstimator:
         )
 
     def estimate_job(
-        self, job_type: str, model_id: str, parameters: dict[str, Any], worker_id: str, gpu_arch: str
+        self,
+        job_type: str,
+        model_id: str,
+        parameters: dict[str, Any],
+        worker_id: str,
+        gpu_arch: str,
     ) -> JobEstimate:
         """Main estimation function
 

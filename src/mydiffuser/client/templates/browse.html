@@ -1,70 +1,8 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>mydiffuser - Browse</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --accent: #58a6ff;
-      --accent-hover: #79b8ff;
-      --success: #3fb950;
-      --error: #f85149;
-      --danger: #da3633;
-      --danger-hover: #f85149;
-      --badge-image: #238636;
-      --badge-video: #8957e5;
-      --badge-img2img: #bf8700;
-    }
+{% extends "base.html" %}
 
-    * {
-      box-sizing: border-box;
-    }
+{% block title %}Browse - MyDiffuser{% endblock %}
 
-    body {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      margin: 0;
-      padding: 24px;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      background-image:
-        radial-gradient(ellipse at 20% 0%, rgba(88, 166, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 100%, rgba(63, 185, 80, 0.06) 0%, transparent 50%);
-    }
-
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
-    }
-
-    h1 {
-      font-size: 2em;
-      margin-bottom: 0.5em;
-      color: #58a6ff;
-    }
-
-    .nav {
-      margin-bottom: 2em;
-      padding-bottom: 1em;
-      border-bottom: 1px solid #30363d;
-    }
-
-    .nav a {
-      color: #58a6ff;
-      text-decoration: none;
-      margin-right: 1em;
-    }
-
-    .nav a:hover {
-      text-decoration: underline;
-    }
-
+{% block extra_styles %}
     /* Filter tabs */
     .filter-tabs {
       display: flex;
@@ -523,23 +461,17 @@
       line-height: 1;
     }
   </style>
-</head>
-<body>
-  <div class="container">
-    <h1>📁 Browse History</h1>
+{% endblock %}
 
-    <div class="nav">
-      <a href="/">← Generate Image</a>
-      <a href="/generate/video">Generate Video</a>
-      <a href="/jobs">Job Queue</a>
-      <a href="/assist">Prompt Assistant</a>
-      <a href="/health-dashboard">Worker Health</a>
-    </div>
+{% block content %}
+    <h1>📁 Browse</h1>
 
     <div class="filter-tabs" id="filterTabs">
       <button class="filter-tab active" data-type="all">All</button>
       <button class="filter-tab" data-type="image">Images</button>
+      {% if VIDEO_ENABLED %}
       <button class="filter-tab" data-type="video">Videos</button>
+      {% endif %}
     </div>
 
     <div id="bulkControls" style="margin: 12px 0; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: none;">
@@ -615,14 +547,16 @@
 
           <div class="modal-actions" id="modalActions">
             <button class="btn btn-primary" id="templateBtn">Use as Template</button>
+            {% if VIDEO_ENABLED %}
             <button class="btn btn-secondary" id="videoBtn" style="display: none;">Generate Video</button>
+            {% endif %}
             <button class="btn btn-danger" id="deleteBtn">Delete</button>
           </div>
         </div>
       </div>
     </div>
-  </div>
+{% endblock %}
 
+{% block scripts %}
 <script src="/static/js/browse.js"></script>
-</body>
-</html>
+{% endblock %}

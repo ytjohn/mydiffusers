@@ -107,9 +107,11 @@ Only `blocks` dependencies affect the ready work queue.
 - **GPU**: AMD Max+ 395 (Strix Point APU, gfx1151)
 - **Memory**: 128GB unified memory (96GB allocated to GPU via BIOS, 32GB to CPU)
 - **OS**: Ubuntu 24.04.3 LTS, kernel 6.14
-- **Platform**: ROCm 7.1 (stable production) with PyTorch 2.11.0.dev20260102 nightly wheels
+- **Platform**: ROCm 7.11 (gfx1151-specific preview) with PyTorch nightlies
+  - **gfx1151-specific index**: https://rocm.nightlies.amd.com/v2-staging/gfx1151/
+  - Includes MIOpen with explicit gfx1151 support (`-DMIO_BN_GFX115X=1`)
+  - Source: [ROCm/TheRock#2488](https://github.com/ROCm/TheRock/issues/2488#issuecomment-3664535415)
   - Note: ROCm 7.1 (production) and 7.9+/7.11 (preview) are parallel streams, not sequential
-  - Using stable ROCm 7.1 + latest PyTorch nightlies is recommended for gfx1151
 - **PyTorch**: Configured for `bfloat16` with math-only SDP backend for AMD stability
 
 ### ROCm/gfx1151 Known Issues
@@ -123,12 +125,17 @@ The gfx1151 GPU architecture is very new and has limited MIOpen kernel support:
 - **Cache persistence**: Survives reboots, only cleared on PyTorch/ROCm upgrades
 
 **VAE Decode Performance:**
-- **GPU with bf16**: ✅ **WORKS** - 31s decode after initial kernel compilation (4x faster than CPU)
-  - Requires proper GPU cleanup between jobs (implemented 2026-01-04)
-  - Without cleanup: Progressive slowdown and eventual GPU hang after 4-5 videos
-- **CPU with fp32**: ✅ Stable fallback - 127s decode, no compilation delay
-  - Use `MYDIFFUSER_VAE_DEVICE=cpu` for maximum stability
-- **Recommendation**: Use GPU (default) with proper cleanup for 4x speedup
+- **GPU with bf16 (ROCm 7.11)**: 🧪 **TESTING** - Upgraded to gfx1151-specific build
+  - **Previous status (ROCm 7.1)**: Random GPU hangs after 1-5 videos
+  - **Current status (ROCm 7.11)**: Testing with explicit gfx1151 MIOpen support
+  - Installed: torch 2.11.0a0+rocm7.11.0a20260103 (2026-01-04)
+  - MIOpen now includes `-DMIO_BN_GFX115X=1` (gfx1151-specific kernels)
+  - **GPU recovery is enabled and working** (auto-resets on hang, ~2s recovery)
+  - Need to test if hangs are resolved with new MIOpen support
+- **CPU with fp32**: ✅ **STABLE FALLBACK** - 127s decode, 100% reliable
+  - Use `MYDIFFUSER_VAE_DEVICE=cpu` if GPU still unstable
+  - 4x slower but never hangs or fails
+- **Recommendation**: Test GPU decode after reboot. If still unstable, revert to CPU default.
 
 See `vae-issues.md` for historical debugging and alternative configurations.
 
@@ -640,24 +647,29 @@ def my_function():
 
 ### 4. uv sync / pip install torch might replace rocm wheels
 
-**Status:** ⚠️ **PARTIALLY FIXED** - pytorch-rocm nightly index has broken triton dependencies (as of 2026-01-04)
+**Status:** ✅ **FIXED** - Using AMD's gfx1151-specific nightly index (as of 2026-01-04)
 
 **Symptom:** Python / Torch unable to detect ROCm GPU, or `uv sync` fails with missing triton-rocm dependencies
 
 **Issue Evolution:**
 1. **Initial problem (pre-2026-01-04):** `uv sync` would replace ROCm wheels with CUDA versions
 2. **First fix:** Added `[tool.uv.sources]` to pin torch to pytorch-rocm index
-3. **New problem (2026-01-04 post-reboot):** pytorch-rocm nightly index has missing triton-rocm dependencies
+3. **Second problem (2026-01-04):** pytorch-rocm nightly index has missing triton-rocm dependencies
    - torch depends on specific triton-rocm versions (3.5.1+gitbfeb0668, 3.6.0+git8fedd49b, etc.)
    - These triton wheels don't exist in the index
    - `uv sync` fails with "No solution found when resolving dependencies"
+4. **Final solution (2026-01-04):** AMD's gfx1151-specific nightly index
+   - Index: https://rocm.nightlies.amd.com/v2-staging/gfx1151/
+   - ROCm 7.11 with explicit gfx1151 MIOpen support
+   - No triton dependency issues
+   - Source: [ROCm/TheRock#2488](https://github.com/ROCm/TheRock/issues/2488#issuecomment-3664535415)
 
 **Current Solution (2026-01-04):**
 
 Bypass uv's dependency resolver entirely by installing torch explicitly and removing it from managed dependencies:
 
 1. **scripts/install-rocm.sh** - Explicitly installs torch ROCm first, then manually installs each dependency
-   - `uv pip install --pre torch==2.11.0.dev20260102` from ROCm index
+   - `uv pip install --pre torch torchvision torchaudio` from gfx1151-specific index
    - Manual `uv pip install` for each dependency (accelerate, diffusers, etc.)
    - Avoids `uv sync` which would replace torch
 

@@ -358,6 +358,14 @@ def create_worker_app() -> FastAPI:
         job_id = str(uuid.uuid4())
         logger.info(f"[{job_id}] New {type} job submitted")
 
+        # Check if video is enabled
+        if type == "video" and not VIDEO_ENABLED:
+            raise HTTPException(
+                status_code=400,
+                detail="Video generation is disabled on this worker. "
+                "Enable with MYDIFFUSER_VIDEO=1 environment variable.",
+            )
+
         # Parse request
         try:
             request_data = json.loads(request_json)

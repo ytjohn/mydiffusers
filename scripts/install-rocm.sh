@@ -10,8 +10,9 @@ command -v uv >/dev/null 2>&1 || curl -sSL https://astral.sh/uv/install.sh | sh
 source .venv/bin/activate
 
 # Install ROCm PyTorch FIRST (explicit wheel install bypasses broken triton deps)
-# Pinned to 2.11.0.dev20260102 - known working version
-uv pip install --pre torch==2.11.0.dev20260102 torchvision torchaudio \
+# Using ROCm 7.1 nightly index (stable version for gfx1151)
+# Note: ROCm 7.11 gfx1151-specific nightlies tested but had worker restart issues
+uv pip install --pre torch torchvision torchaudio \
   --index-url https://download.pytorch.org/whl/nightly/rocm7.1
 
 # Install transformers from GitHub (required for Qwen2-VL support)

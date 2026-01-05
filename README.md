@@ -79,6 +79,21 @@ The **worker** (GPU inference) runs at `http://localhost:8001`
 
 > ⚠️ **Important**: Always use `./scripts/run.sh` instead of `uv run` or direct `python` commands. `uv run` will replace ROCm torch with CUDA version!
 
+### Configuration
+
+**Environment Variables:**
+
+- `MYDIFFUSER_VIDEO=1` - Enable video generation (disabled by default due to GPU stability issues on gfx1151)
+- `MYDIFFUSER_VAE_DEVICE=cpu` - Use CPU for VAE decode (slower but more stable on some hardware)
+- `MYDIFFUSER_VIDEO_MODEL=5B` - Video model size: 5B (fast) or 14B (quality, requires more VRAM)
+
+**Example:**
+```bash
+# Enable video generation
+export MYDIFFUSER_VIDEO=1
+./scripts/start-worker.sh
+```
+
 ## Architecture
 
 MyDiffuser uses a **client/worker split**:

@@ -333,18 +333,29 @@ class WanVideoGenerator(BaseVideoGenerator):
             # Synchronize GPU after inference to ensure clean state before VAE decode
             # This prevents accumulated GPU stress from inference carrying into VAE decode
             if DEVICE == "cuda" and torch.cuda.is_available():
+                # Log GPU memory status BEFORE cleanup
+                free_mem_before = torch.cuda.mem_get_info()[0] / (1024**3)
+                total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+                logger.info(
+                    "%sGPU memory before cleanup: %.1f GiB free / %.1f GiB total",
+                    log_prefix,
+                    free_mem_before,
+                    total_mem,
+                )
+
                 logger.info("%sInference complete, synchronizing GPU...", log_prefix)
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
 
-                # Log GPU memory status before VAE decode
-                free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
-                total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+                # Log GPU memory status AFTER cleanup, before VAE decode
+                free_mem_after = torch.cuda.mem_get_info()[0] / (1024**3)
+                freed = free_mem_after - free_mem_before
                 logger.info(
-                    "%sGPU memory before VAE decode: %.1f GiB free / %.1f GiB total",
+                    "%sGPU memory after cleanup: %.1f GiB free / %.1f GiB total (freed %.1f GiB)",
                     log_prefix,
-                    free_mem,
+                    free_mem_after,
                     total_mem,
+                    freed,
                 )
 
             # Trigger post-processing callback (VAE decode starting)

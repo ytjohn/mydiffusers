@@ -1,0 +1,235 @@
+{
+  "system_info": {
+    "cuda_available": true,
+    "device_name": "AMD Radeon 8060S",
+    "total_memory_gb": 96.0,
+    "timestamp": 1767399728.943294
+  },
+  "benchmarks": {
+    "image": [
+      {
+        "width": 512,
+        "height": 512,
+        "steps": 4,
+        "type": "image_model_load",
+        "predicted_gb": 7.525,
+        "measured_gb": 19.427734375,
+        "accuracy": 11.902734375,
+        "details": {
+          "description": "Image model load: 512x512@4steps",
+          "duration_sec": 10.775874137878418,
+          "baseline_gb": 0.15234375,
+          "post_gb": 19.580078125,
+          "delta_gb": 19.427734375,
+          "baseline_memory": {
+            "allocated_gb": 0.0,
+            "reserved_gb": 0.0,
+            "free_gb": 95.84765625,
+            "total_gb": 96.0,
+            "used_gb": 0.15234375
+          },
+          "post_memory": {
+            "allocated_gb": 19.175511837005615,
+            "reserved_gb": 19.28515625,
+            "free_gb": 76.419921875,
+            "total_gb": 96.0,
+            "used_gb": 19.580078125
+          }
+        }
+      },
+      {
+        "width": 832,
+        "height": 480,
+        "steps": 4,
+        "type": "image_model_load",
+        "predicted_gb": 7.823702032132354,
+        "measured_gb": 19.28515625,
+        "accuracy": 11.461454217867647,
+        "details": {
+          "description": "Image model load: 832x480@4steps",
+          "duration_sec": 8.726316213607788,
+          "baseline_gb": 0.294921875,
+          "post_gb": 19.580078125,
+          "delta_gb": 19.28515625,
+          "baseline_memory": {
+            "allocated_gb": 0.0,
+            "reserved_gb": 0.0,
+            "free_gb": 95.705078125,
+            "total_gb": 96.0,
+            "used_gb": 0.294921875
+          },
+          "post_memory": {
+            "allocated_gb": 19.175511837005615,
+            "reserved_gb": 19.28515625,
+            "free_gb": 76.419921875,
+            "total_gb": 96.0,
+            "used_gb": 19.580078125
+          }
+        }
+      },
+      {
+        "width": 1280,
+        "height": 704,
+        "steps": 8,
+        "type": "image_model_load",
+        "predicted_gb": 8.613913267761742,
+        "measured_gb": 19.28515625,
+        "accuracy": 10.671242982238258,
+        "details": {
+          "description": "Image model load: 1280x704@8steps",
+          "duration_sec": 9.513391733169556,
+          "baseline_gb": 0.294921875,
+          "post_gb": 19.580078125,
+          "delta_gb": 19.28515625,
+          "baseline_memory": {
+            "allocated_gb": 0.0,
+            "reserved_gb": 0.0,
+            "free_gb": 95.705078125,
+            "total_gb": 96.0,
+            "used_gb": 0.294921875
+          },
+          "post_memory": {
+            "allocated_gb": 19.175511837005615,
+            "reserved_gb": 19.28515625,
+            "free_gb": 76.419921875,
+            "total_gb": 96.0,
+            "used_gb": 19.580078125
+          }
+        }
+      },
+      {
+        "width": 1024,
+        "height": 1024,
+        "steps": 20,
+        "type": "image_model_load",
+        "predicted_gb": 8.8,
+        "measured_gb": 19.28515625,
+        "accuracy": 10.48515625,
+        "details": {
+          "description": "Image model load: 1024x1024@20steps",
+          "duration_sec": 8.895150184631348,
+          "baseline_gb": 0.294921875,
+          "post_gb": 19.580078125,
+          "delta_gb": 19.28515625,
+          "baseline_memory": {
+            "allocated_gb": 0.0,
+            "reserved_gb": 0.0,
+            "free_gb": 95.705078125,
+            "total_gb": 96.0,
+            "used_gb": 0.294921875
+          },
+          "post_memory": {
+            "allocated_gb": 19.175511837005615,
+            "reserved_gb": 19.28515625,
+            "free_gb": 76.419921875,
+            "total_gb": 96.0,
+            "used_gb": 19.580078125
+          }
+        }
+      }
+    ],
+    "video": [
+      {
+        "model": "5B",
+        "width": 832,
+        "height": 480,
+        "frames": 16,
+        "steps": 15,
+        "type": "video_model_load",
+        "predicted_gb": 11.066798719526385,
+        "measured_gb": 1.974609375,
+        "accuracy": 9.092189344526385,
+        "details": {
+          "description": "Video model load: 5B 832x480@16frames",
+          "duration_sec": 34.25150942802429,
+          "baseline_gb": 19.580078125,
+          "post_gb": 21.5546875,
+          "delta_gb": 1.974609375,
+          "baseline_memory": {
+            "allocated_gb": 19.175511837005615,
+            "reserved_gb": 19.28515625,
+            "free_gb": 76.419921875,
+            "total_gb": 96.0,
+            "used_gb": 19.580078125
+          },
+          "post_memory": {
+            "allocated_gb": 21.243144035339355,
+            "reserved_gb": 21.259765625,
+            "free_gb": 74.4453125,
+            "total_gb": 96.0,
+            "used_gb": 21.5546875
+          }
+        }
+      },
+      {
+        "model": "5B",
+        "width": 832,
+        "height": 480,
+        "frames": 36,
+        "steps": 15,
+        "type": "video_model_load",
+        "predicted_gb": 15.025297118934368,
+        "measured_gb": 21.259765625,
+        "accuracy": 6.234468506065632,
+        "details": {
+          "description": "Video model load: 5B 832x480@36frames",
+          "duration_sec": 20.230259656906128,
+          "baseline_gb": 0.294921875,
+          "post_gb": 21.5546875,
+          "delta_gb": 21.259765625,
+          "baseline_memory": {
+            "allocated_gb": 0.0,
+            "reserved_gb": 0.0,
+            "free_gb": 95.705078125,
+            "total_gb": 96.0,
+            "used_gb": 0.294921875
+          },
+          "post_memory": {
+            "allocated_gb": 21.243144035339355,
+            "reserved_gb": 21.259765625,
+            "free_gb": 74.4453125,
+            "total_gb": 96.0,
+            "used_gb": 21.5546875
+          }
+        }
+      }
+    ],
+    "assistant": [
+      {
+        "model": "qwen2-vl-7b",
+        "type": "assistant_model_load",
+        "predicted_gb": 13.4,
+        "measured_gb": -17.091796875,
+        "accuracy": 30.491796875,
+        "details": {
+          "description": "Assistant model load: qwen2-vl-7b",
+          "duration_sec": 14.996605396270752,
+          "baseline_gb": 21.5546875,
+          "post_gb": 4.462890625,
+          "delta_gb": -17.091796875,
+          "baseline_memory": {
+            "allocated_gb": 21.243144035339355,
+            "reserved_gb": 21.259765625,
+            "free_gb": 74.4453125,
+            "total_gb": 96.0,
+            "used_gb": 21.5546875
+          },
+          "post_memory": {
+            "allocated_gb": 4.114570617675781,
+            "reserved_gb": 4.16796875,
+            "free_gb": 91.537109375,
+            "total_gb": 96.0,
+            "used_gb": 4.462890625
+          }
+        }
+      }
+    ]
+  },
+  "accuracy_stats": {
+    "total_measurements": 7,
+    "mean_absolute_error": 12.90557750724256,
+    "max_error": 30.491796875,
+    "min_error": 6.234468506065632,
+    "accuracy_percentage": -29.055775072425604
+  }
+}

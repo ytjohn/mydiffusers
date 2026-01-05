@@ -167,6 +167,25 @@ class PerformanceEstimator:
         logger.info(f"  VRAM MAE: {mae_vram:.2f} GB")
         logger.info(f"  Time MAPE: {mape_time:.1f}%")
 
+        # Validate model quality - reject if predictions are terrible
+        MAX_MAPE = 100.0  # Reject models with >100% time prediction error
+        if mape_time > MAX_MAPE:
+            logger.warning(
+                f"Model quality too low for {model_id} on {gpu_arch}: "
+                f"MAPE={mape_time:.1f}% (max {MAX_MAPE}%). "
+                f"Keeping fallback estimates. Check for outliers in training data."
+            )
+            return None
+
+        # Additional validation: reject negative base time (physically impossible)
+        if time_base < 0:
+            logger.warning(
+                f"Invalid model for {model_id} on {gpu_arch}: "
+                f"negative time_base={time_base:.1f}s. "
+                f"Likely caused by outliers. Using fallback estimates."
+            )
+            return None
+
         coefficients = ModelCoefficients(
             time_base=float(time_base),
             time_pixel_coef=float(time_pixel_coef),

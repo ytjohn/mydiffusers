@@ -1,0 +1,23 @@
+VRAM Baseline Measurement Summary
+========================================
+
+Device: AMD Radeon 8060S
+Total VRAM: 96.0 GB
+
+Prediction Accuracy: -29.1%
+Mean Absolute Error: 12.91 GB
+
+IMAGE MODELS:
+--------------------
+512x512@4: 7.5GB predicted, 19.4GB measured (11.9GB error)
+832x480@4: 7.8GB predicted, 19.3GB measured (11.5GB error)
+1280x704@8: 8.6GB predicted, 19.3GB measured (10.7GB error)
+1024x1024@20: 8.8GB predicted, 19.3GB measured (10.5GB error)
+
+VIDEO MODELS:
+--------------------
+832x480@15: 11.1GB predicted, 2.0GB measured (9.1GB error)
+832x480@15: 15.0GB predicted, 21.3GB measured (6.2GB error)
+
+ASSISTANT MODELS:
+--------------------

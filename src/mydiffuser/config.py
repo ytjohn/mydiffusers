@@ -180,16 +180,20 @@ DTYPE_NAME = os.environ.get("MYDIFFUSER_DTYPE", "bf16").lower()
 DTYPE = _DTYPE_MAP.get(DTYPE_NAME, _DTYPE_MAP["bf16"])
 
 # --- VAE decode settings ---
-# ROCm (gfx1151): GPU VAE decode WORKS with bf16 (tested 2026-01-03)
-#   - First run: 20-30min MIOpen kernel compilation (one-time cost)
-#   - Cached runs: 31s decode (4x faster than CPU's 127s)
-#   - Kernels cached in ~/.cache/miopen/, persist across reboots
+# ROCm (gfx1151): TESTING GPU VAE decode with ROCm 7.11 (2026-01-04)
+#   - Upgraded to ROCm 7.11.0a20260103 with gfx1151-specific MIOpen support
+#   - Index: https://rocm.nightlies.amd.com/v2-staging/gfx1151/
+#   - Previous issue (ROCm 7.1): Random GPU hangs after 1-5 videos
+#   - Testing if ROCm 7.11 fixes stability (explicit gfx1151 support in MIOpen)
+#   - CPU fallback: 127s decode, 100% reliable
 # CUDA (NVIDIA): VAE on GPU with fp16 is fast and works great
 if IS_ROCM:
-    # GPU decode with bf16 (recommended for gfx1151)
+    # TESTING: GPU decode with ROCm 7.1 (stable version for gfx1151)
+    # Note: ROCm 7.11 tested but had worker restart issues
+    # If GPU decode unstable, set MYDIFFUSER_VAE_DEVICE=cpu for reliable fallback
     _DEFAULT_VAE_DEVICE = "cuda"
     _DEFAULT_VAE_DTYPE = "bf16"
-    # Alternative: CPU fallback (stable but 4x slower)
+    # CPU fallback (use if GPU still unstable):
     # _DEFAULT_VAE_DEVICE = "cpu"
     # _DEFAULT_VAE_DTYPE = "fp32"
 elif IS_CUDA:
@@ -278,8 +282,9 @@ def ensure_output_dirs() -> None:
 
 IMAGE_MODEL_ID = "Tongyi-MAI/Z-Image-Turbo"
 
-# Video generation: enabled by default, disable with MYDIFFUSER_VIDEO=0
-VIDEO_ENABLED = os.environ.get("MYDIFFUSER_VIDEO", "1") == "1"
+# Video generation: DISABLED by default due to GPU stability issues on gfx1151
+# Enable explicitly with MYDIFFUSER_VIDEO=1 if you have stable hardware
+VIDEO_ENABLED = os.environ.get("MYDIFFUSER_VIDEO", "0") == "1"
 
 # Video model: 5B (fast, ~10GB) or 14B (quality, ~28GB)
 VIDEO_MODEL_SIZE = os.environ.get("MYDIFFUSER_VIDEO_MODEL", "5B")
@@ -377,7 +382,8 @@ def log_config_summary():
     logger.info("Configuration: %s", summary)
 
     # Warn about potential issues
-    if IS_ROCM:
-        logger.info("ROCm detected: VAE will decode on CPU for stability")
+    if IS_ROCM and VAE_DEVICE == "cuda":
+        logger.warning("⚠️  ROCm + GPU VAE decode: UNSTABLE on gfx1151 (random hangs)")
+        logger.warning("   Recommend: MYDIFFUSER_VAE_DEVICE=cpu for 100% reliability")
     if VAE_DEVICE == "cpu" and IS_CUDA:
         logger.warning("VAE on CPU but CUDA available - this will be slow")

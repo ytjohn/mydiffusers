@@ -296,9 +296,21 @@ async def poll_and_fetch_job(job_id: str) -> Path | None:
                         # Calculate estimates for this actual run
                         from mydiffuser.client.estimate import job_estimator
 
+                        # Get worker GPU architecture for accurate predictions
+                        gpu_arch = "unknown"
+                        try:
+                            worker_endpoint = get_worker_endpoint(job.worker_name)
+                            async with httpx.AsyncClient(timeout=5.0) as client:
+                                response = await client.get(f"{worker_endpoint}/health")
+                                response.raise_for_status()
+                                health_data = response.json()
+                                gpu_arch = health_data.get("gpu_arch", "unknown")
+                        except Exception as e:
+                            logger.debug(f"Failed to get GPU arch for {job.worker_name}: {e}")
+
                         try:
                             vram_estimates = job_estimator.estimate_job(
-                                job.type, model_id, parameters, job.worker_name
+                                job.type, model_id, parameters, job.worker_name, gpu_arch
                             )
                             vram_predicted = vram_estimates.vram_total_needed
                             time_predicted = vram_estimates.time_estimate_seconds
