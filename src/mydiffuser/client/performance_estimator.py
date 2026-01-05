@@ -142,8 +142,15 @@ class PerformanceEstimator:
         vram_actual = np.array([d["vram_actual"] for d in data])
         time_actual = np.array([d["time_actual"] for d in data])
 
-        # Feature engineering: pixels^0.85 for time, pixels^0.8 for VRAM
-        pixels_time_scaled = pixels**0.85
+        # Feature engineering: Different exponents for images vs videos
+        # Images: time dominated by steps, NO pixel scaling (exp=0.0)
+        #         Fast models like Z-Image-Turbo have similar speed across resolutions
+        # Videos: time scales strongly with resolution (exp=0.85)
+        # VRAM: similar scaling for both (exp=0.8)
+        if generation_type == "image":
+            pixels_time_scaled = np.ones(len(pixels))  # No pixel dependency for images
+        else:
+            pixels_time_scaled = pixels**0.85  # Strong pixel dependency for videos
         pixels_vram_scaled = pixels**0.8
 
         # Fit VRAM model: vram = base + pixel_coef * pixels^0.8
@@ -278,7 +285,12 @@ class PerformanceEstimator:
                 return None
 
         pixels = width * height
-        pixels_time_scaled = pixels**0.85
+
+        # Use same scaling as training (different for images vs videos)
+        if generation_type == "image":
+            pixels_time_scaled = 1.0  # No pixel dependency for images
+        else:
+            pixels_time_scaled = pixels**0.85  # Strong pixel dependency for videos
         pixels_vram_scaled = pixels**0.8
 
         # Predict VRAM
