@@ -251,6 +251,35 @@ async def trigger_retrain(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/performance/cleanup")
+async def cleanup_predictions():
+    """Clean up bad prediction data (e.g., hardcoded 300s defaults).
+
+    Removes time_predicted_seconds = 300 from runs table as these were
+    early hardcoded defaults that skew the training data.
+
+    Returns:
+        Number of rows cleaned up
+    """
+    with database.get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE runs
+            SET time_predicted_seconds = NULL
+            WHERE time_predicted_seconds = 300
+            """
+        )
+        conn.commit()
+        count = cursor.rowcount
+
+    logger.info(f"Cleaned up {count} rows with hardcoded 300s predictions")
+    return {
+        "status": "success",
+        "rows_cleaned": count,
+        "message": f"Removed {count} hardcoded 300s predictions"
+    }
+
+
 @router.get("/performance/export")
 async def export_performance_data():
     """Export all performance data as CSV for external analysis.
