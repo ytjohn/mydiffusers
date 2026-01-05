@@ -63,11 +63,26 @@ class BenchmarkConfig:
     worker_name: str = "local"
 
     # Image parameters
+    # More resolutions to test pixel dependency hypothesis
+    # Current model assumes pixels^0.0, but 768x768 and 1280x704 show slower times
     image_resolutions: list[tuple[int, int]] = field(
-        default_factory=lambda: [(832, 480), (1280, 704), (1920, 1088)]
+        default_factory=lambda: [
+            (832, 480),    # baseline (228 samples)
+            (480, 832),    # portrait (17 samples)
+            (768, 768),    # square small (7 samples, 3.2s/step - slower!)
+            (1024, 1024),  # square medium (NEW - test square hypothesis)
+            (1280, 704),   # 720p (1 sample, 6.3s/step - much slower!)
+            (1920, 1088),  # 1080p (NEW - test high-res)
+        ]
     )
-    image_guidance_scales: list[float] = field(default_factory=lambda: [0.3, 3.0, 8.0])
-    image_step_counts: list[int] = field(default_factory=lambda: [3, 6, 10, 20])
+    # More guidance scales to check if guidance affects timing
+    image_guidance_scales: list[float] = field(
+        default_factory=lambda: [0.3, 3.0, 8.0]
+    )
+    # More step variations for better linear fit (especially 2, 5, 7, 8, 12, 15)
+    image_step_counts: list[int] = field(
+        default_factory=lambda: [1, 2, 4, 6, 8, 10, 15, 20]
+    )
 
     # Video parameters (optional)
     video_resolutions: list[tuple[int, int]] = field(
