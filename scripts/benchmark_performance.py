@@ -57,43 +57,72 @@ def randomSeed():
 
 
 def batman_prompt_factory() -> str:
-    """Generate varied Batman scenarios for visually interesting benchmarks.
+    """Generate varied Batman scenarios using mix-and-match actions and locations.
 
     Prompt content/length doesn't affect timing (verified), but adds visual variety.
+    Combines random actions with random locations for exponential variety.
     """
-    scenarios = [
-        "batman swinging through Gotham City on a grappling hook",
-        "batman confronting the Joker in an abandoned warehouse",
-        "batman standing on a rooftop overlooking the city at night",
-        "batman investigating a crime scene with detective tools",
-        "batman driving the Batmobile at high speed through city streets",
-        "batman fighting Bane in the underground sewers",
-        "batman meeting Commissioner Gordon on the GCPD rooftop",
-        "batman infiltrating Arkham Asylum past security",
-        "batman gliding between skyscrapers with his cape",
-        "batman working in the Batcave with computer screens",
-        "batman facing off against Scarecrow in a nightmare sequence",
-        "batman rescuing hostages from Two-Face's hideout",
-        "batman pursuing Catwoman across Gotham rooftops",
-        "batman analyzing forensic evidence in his laboratory",
-        "batman defending Wayne Manor from intruders",
-        "batman hacking on a computer in a datacenter while fending off villain distractions",
-        "batman training in the Batcave gym with advanced equipment",
-        "batman standing in the rain on a Gothic cathedral",
-        "batman examining the Bat-Signal in the cloudy night sky",
-        "batman confronting Penguin in the Iceberg Lounge",
-        "batman disarming a bomb with precise movements",
-        "batman interrogating a criminal in a dark alley",
-        "batman emerging from shadows in a dimly lit warehouse",
-        "batman riding the Batcycle through narrow city alleys",
+    actions = [
+        "batman swinging on a grappling hook",
+        "batman confronting the Joker",
+        "batman standing watching over the city",
+        "batman investigating a crime scene",
+        "batman driving the Batmobile at high speed",
+        "batman fighting Bane",
+        "batman meeting Commissioner Gordon",
+        "batman infiltrating past security guards",
+        "batman gliding with his cape spread",
+        "batman working on computer screens",
+        "batman facing off against Scarecrow",
+        "batman rescuing hostages from Two-Face",
+        "batman pursuing Catwoman",
+        "batman analyzing forensic evidence",
+        "batman defending against intruders",
+        "batman hacking on a computer while fending off villain distractions",
+        "batman training with advanced equipment",
+        "batman standing in the rain",
+        "batman examining the Bat-Signal",
+        "batman confronting Penguin",
+        "batman disarming a bomb",
+        "batman interrogating a criminal",
+        "batman emerging from shadows",
+        "batman riding the Batcycle at high speed",
     ]
 
-    scenario = random.choice(scenarios)
+    locations = [
+        "through Gotham City",
+        "in an abandoned warehouse",
+        "on a rooftop overlooking the city at night",
+        "at a crime scene in Crime Alley",
+        "through city streets",
+        "in the underground sewers",
+        "on the GCPD rooftop",
+        "in Arkham Asylum",
+        "between towering skyscrapers",
+        "in the Batcave",
+        "in a nightmare realm",
+        "in Two-Face's hideout",
+        "across Gotham rooftops",
+        "in his secret laboratory",
+        "at Wayne Manor",
+        "in a high-tech datacenter",
+        "in the Batcave training area",
+        "on a Gothic cathedral",
+        "in the cloudy night sky",
+        "at the Iceberg Lounge",
+        "in a tense standoff",
+        "in a dark alley",
+        "in a dimly lit warehouse",
+        "through narrow city alleys",
+    ]
+
+    action = random.choice(actions)
+    location = random.choice(locations)
 
     # Consistent style suffix for quality
     style = "dramatic lighting, high detail, intricate, sharp focus, digital art"
 
-    return f"dc comics animation realistic style. {scenario}. {style}"
+    return f"dc comics animation realistic style. {action} {location}. {style}"
 
 @dataclass
 class BenchmarkConfig:
