@@ -47,9 +47,25 @@ tail -f outputs/logs/client.log
 ```
 
 ## Stop Services
+
+**Preferred method** (graceful shutdown via API):
 ```bash
-pkill -f "run_worker.py"
-pkill -f "run_client.py"
+# Stop worker (allows models to unload cleanly)
+curl -X POST http://localhost:8001/shutdown
+
+# Stop client
+curl -X POST http://localhost:8000/shutdown
+```
+
+**Alternative** (if API unavailable):
+```bash
+# Use restart scripts (handles graceful shutdown)
+bash scripts/restart-worker.sh  # graceful by default
+bash scripts/restart-client.sh
+
+# Or kill screen sessions
+screen -S worker -X quit
+screen -S client -X quit
 ```
 
 ## Full Status

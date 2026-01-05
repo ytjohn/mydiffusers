@@ -83,13 +83,13 @@ This will:
 - Metadata won't have accurate GPU info
 
 ### Option 2: Wait Longer
-Sometimes the GPU takes >15 seconds to fully release memory. Try:
+Sometimes the GPU takes >15 seconds to fully release memory. The restart script handles this:
 ```bash
-# Manual restart with longer wait
-pkill -9 -f run_worker
-sleep 15
-timeout 5 rocminfo  # Verify GPU is responsive
-python scripts/run_worker.py --port 8001
+# Graceful restart (waits up to 60s for clean shutdown)
+bash scripts/restart-worker.sh
+
+# If worker hung, use force mode (immediate SIGTERM/SIGKILL)
+bash scripts/restart-worker.sh --force
 ```
 
 ### Option 3: Check for Memory Leaks
@@ -97,8 +97,9 @@ python scripts/run_worker.py --port 8001
 # Before stopping worker
 rocm-smi --showmeminfo
 
-# Stop worker
-pkill -9 -f run_worker
+# Stop worker gracefully (allows model cleanup)
+curl -X POST http://localhost:8001/shutdown
+# Or use: bash scripts/restart-worker.sh --force
 
 # Wait and check again
 sleep 10
