@@ -21,18 +21,21 @@ logger = logging.getLogger(__name__)
 class ModelCoefficients:
     """Coefficients for performance prediction models"""
 
-    # Time prediction: time = base + pixel_coef * pixels^0.85 + step_coef * steps
-    time_base: float
-    time_pixel_coef: float
-    time_step_coef: float
+    # Time prediction (MULTIPLICATIVE MODEL):
+    #   time_per_step = base + pixel_coef * pixels^exp + guidance_coef * guidance
+    #   total_time = time_per_step * steps
+    time_base: float  # Base time per step (seconds)
+    time_pixel_coef: float  # Coefficient for pixel scaling
+    time_step_coef: float  # Pixel exponent (0.0 to 1.0)
+    time_guidance_coef: float = 0.0  # Coefficient for guidance_scale
 
     # VRAM prediction: vram = base + pixel_coef * pixels^0.8
-    vram_base: float
-    vram_pixel_coef: float
+    vram_base: float = 0.0
+    vram_pixel_coef: float = 0.0
 
-    sample_count: int
-    mae_vram: float  # Mean absolute error for VRAM
-    mape_time: float  # Mean absolute percentage error for time
+    sample_count: int = 0
+    mae_vram: float = 0.0  # Mean absolute error for VRAM
+    mape_time: float = 0.0  # Mean absolute percentage error for time
 
 
 class PerformanceEstimator:
@@ -77,7 +80,8 @@ class PerformanceEstimator:
                 SELECT
                     width, height, num_inference_steps, num_frames,
                     vram_actual_total, seconds_elapsed,
-                    time_predicted_seconds, vram_predicted_total
+                    time_predicted_seconds, vram_predicted_total,
+                    guidance_scale
                 FROM runs
                 WHERE type = ?
                   AND model_id = ?
@@ -107,6 +111,7 @@ class PerformanceEstimator:
                     "time_actual": row[5],
                     "time_predicted": row[6],
                     "vram_predicted": row[7],
+                    "guidance": row[8] or 0.3,  # Default guidance if NULL
                 }
             )
 
@@ -139,40 +144,89 @@ class PerformanceEstimator:
         # Prepare features
         pixels = np.array([d["width"] * d["height"] for d in data])
         steps = np.array([d["steps"] for d in data])
+        guidance = np.array([d["guidance"] for d in data])
         vram_actual = np.array([d["vram_actual"] for d in data])
         time_actual = np.array([d["time_actual"] for d in data])
 
-        # Feature engineering: Different exponents for images vs videos
-        # Images: time dominated by steps, NO pixel scaling (exp=0.0)
-        #         Fast models like Z-Image-Turbo have similar speed across resolutions
-        # Videos: time scales strongly with resolution (exp=0.85)
-        # VRAM: similar scaling for both (exp=0.8)
-        if generation_type == "image":
-            pixels_time_scaled = np.ones(len(pixels))  # No pixel dependency for images
-        else:
-            pixels_time_scaled = pixels**0.85  # Strong pixel dependency for videos
-        pixels_vram_scaled = pixels**0.8
+        # MULTIPLICATIVE MODEL: time = time_per_step * steps
+        # where time_per_step = f(resolution, guidance)
+        #
+        # This is the correct model because:
+        # 1. Resolution and guidance determine time_per_step (s/it)
+        # 2. Steps scale linearly: total_time = time_per_step * steps
+        time_per_step = time_actual / steps
 
         # Fit VRAM model: vram = base + pixel_coef * pixels^0.8
-        # Using least squares: [1, pixels^0.8] @ [base, coef] = vram
+        pixels_vram_scaled = pixels**0.8
         X_vram = np.column_stack([np.ones(len(pixels)), pixels_vram_scaled])
         vram_coef, _, _, _ = np.linalg.lstsq(X_vram, vram_actual, rcond=None)
         vram_base, vram_pixel_coef = vram_coef
 
-        # Fit time model: time = base + pixel_coef * pixels^0.85 + step_coef * steps
-        X_time = np.column_stack([np.ones(len(pixels)), pixels_time_scaled, steps])
-        time_coef, _, _, _ = np.linalg.lstsq(X_time, time_actual, rcond=None)
-        time_base, time_pixel_coef, time_step_coef = time_coef
+        # Fit time_per_step model: time_per_step = base + pixel_coef * pixels^exp
+        # Try different exponents to find best fit with valid coefficients
+        best_mape = float("inf")
+        best_coeffs = None
+        best_exp = None
 
-        # Calculate errors
+        # Test exponents from 0.0 (no dependency) to 1.0 (linear)
+        for pixel_exp in [0.0, 0.3, 0.5, 0.7, 0.85, 1.0]:
+            if pixel_exp == 0.0:
+                pixels_scaled = np.ones(len(pixels))
+            else:
+                pixels_scaled = pixels**pixel_exp
+
+            # Include guidance as a feature
+            X_time = np.column_stack([np.ones(len(pixels)), pixels_scaled, guidance])
+            time_coef, _, _, _ = np.linalg.lstsq(X_time, time_per_step, rcond=None)
+            time_base_candidate, time_pixel_coef_candidate, time_guidance_coef_candidate = (
+                time_coef
+            )
+
+            # Validate: base must be positive (physically impossible to have negative base)
+            if time_base_candidate < 0:
+                continue
+
+            # Calculate predictions and error
+            time_per_step_pred = X_time @ time_coef
+            time_pred = time_per_step_pred * steps
+            mape = np.mean(np.abs((time_actual - time_pred) / time_actual)) * 100
+
+            if mape < best_mape:
+                best_mape = mape
+                best_coeffs = (
+                    time_base_candidate,
+                    time_pixel_coef_candidate,
+                    time_guidance_coef_candidate,
+                )
+                best_exp = pixel_exp
+
+        if best_coeffs is None:
+            logger.warning(
+                f"Could not find valid model for {model_id} on {gpu_arch}: "
+                f"all tested exponents resulted in negative base. "
+                f"Using fallback estimates."
+            )
+            return None
+
+        time_base, time_pixel_coef, time_guidance_coef = best_coeffs
+        time_step_coef = best_exp  # Store exponent in step_coef field for compatibility
+
+        # Calculate final predictions and errors
+        if best_exp == 0.0:
+            pixels_time_scaled = np.ones(len(pixels))
+        else:
+            pixels_time_scaled = pixels**best_exp
+        X_time = np.column_stack([np.ones(len(pixels)), pixels_time_scaled, guidance])
+        time_per_step_pred = X_time @ np.array([time_base, time_pixel_coef, time_guidance_coef])
+        time_pred = time_per_step_pred * steps
         vram_pred = X_vram @ vram_coef
-        time_pred = X_time @ time_coef
 
         mae_vram = np.mean(np.abs(vram_actual - vram_pred))
-        mape_time = np.mean(np.abs((time_actual - time_pred) / time_actual)) * 100
+        mape_time = best_mape
 
         logger.info(f"  VRAM MAE: {mae_vram:.2f} GB")
         logger.info(f"  Time MAPE: {mape_time:.1f}%")
+        logger.info(f"  Pixel exponent: {best_exp:.2f}")
 
         # Validate model quality - reject if predictions are terrible
         MAX_MAPE = 100.0  # Reject models with >100% time prediction error
@@ -184,19 +238,11 @@ class PerformanceEstimator:
             )
             return None
 
-        # Additional validation: reject negative base time (physically impossible)
-        if time_base < 0:
-            logger.warning(
-                f"Invalid model for {model_id} on {gpu_arch}: "
-                f"negative time_base={time_base:.1f}s. "
-                f"Likely caused by outliers. Using fallback estimates."
-            )
-            return None
-
         coefficients = ModelCoefficients(
             time_base=float(time_base),
             time_pixel_coef=float(time_pixel_coef),
             time_step_coef=float(time_step_coef),
+            time_guidance_coef=float(time_guidance_coef),
             vram_base=float(vram_base),
             vram_pixel_coef=float(vram_pixel_coef),
             sample_count=len(data),
@@ -225,6 +271,7 @@ class PerformanceEstimator:
             "time_base": coefficients.time_base,
             "time_pixel_coef": coefficients.time_pixel_coef,
             "time_step_coef": coefficients.time_step_coef,
+            "time_guidance_coef": coefficients.time_guidance_coef,
             "vram_base": coefficients.vram_base,
             "vram_pixel_coef": coefficients.vram_pixel_coef,
             "sample_count": coefficients.sample_count,
@@ -261,6 +308,7 @@ class PerformanceEstimator:
         height: int,
         steps: int,
         frames: int = 1,
+        guidance: float = 0.3,
     ) -> tuple[float, float] | None:
         """Predict VRAM and time using learned model
 
@@ -271,6 +319,7 @@ class PerformanceEstimator:
             width, height: Image dimensions
             steps: Number of inference steps
             frames: Number of frames (for video)
+            guidance: Guidance scale (default 0.3)
 
         Returns:
             Tuple of (vram_gb, time_seconds) or None if no model available
@@ -286,24 +335,27 @@ class PerformanceEstimator:
 
         pixels = width * height
 
-        # Use same scaling as training (different for images vs videos)
-        if generation_type == "image":
-            pixels_time_scaled = 1.0  # No pixel dependency for images
-        else:
-            pixels_time_scaled = pixels**0.85  # Strong pixel dependency for videos
+        # VRAM prediction (unchanged)
         pixels_vram_scaled = pixels**0.8
-
-        # Predict VRAM
         vram_predicted = (
             coefficients.vram_base + coefficients.vram_pixel_coef * pixels_vram_scaled
         )
 
-        # Predict time
-        time_predicted = (
+        # Time prediction using MULTIPLICATIVE MODEL: time = time_per_step * steps
+        # where time_per_step = base + pixel_coef * pixels^exp + guidance_coef * guidance
+        pixel_exp = coefficients.time_step_coef
+        if pixel_exp == 0.0:
+            pixels_time_scaled = 1.0
+        else:
+            pixels_time_scaled = pixels**pixel_exp
+
+        # Calculate time_per_step including guidance effect, then multiply by steps
+        time_per_step = (
             coefficients.time_base
             + coefficients.time_pixel_coef * pixels_time_scaled
-            + coefficients.time_step_coef * steps
+            + coefficients.time_guidance_coef * guidance
         )
+        time_predicted = time_per_step * steps
 
         # Apply frame scaling for video (linear with frames)
         if generation_type == "video" and frames > 1:

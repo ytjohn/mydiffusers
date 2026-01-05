@@ -94,6 +94,7 @@ class JobEstimator:
             width=width,
             height=height,
             steps=steps,
+            guidance=guidance,
         )
 
         if prediction:
