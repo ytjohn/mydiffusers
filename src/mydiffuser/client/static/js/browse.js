@@ -67,6 +67,21 @@ function renderTagFilters() {
   container.innerHTML = '';
   container.appendChild(label);
 
+  // Add "Clear Filters" button if any tags are selected
+  if (selectedTags.size > 0) {
+    const clearBtn = document.createElement('button');
+    clearBtn.textContent = `✕ Clear Filters (${selectedTags.size})`;
+    clearBtn.style.cssText = 'padding: 4px 12px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-weight: 600;';
+    clearBtn.addEventListener('click', () => {
+      selectedTags.clear();
+      localStorage.setItem('selectedTags', JSON.stringify([]));
+      renderTagFilters();
+      currentPage = 1;
+      loadRuns();
+    });
+    container.appendChild(clearBtn);
+  }
+
   // Render regular tags (excluding nsfw)
   const regularTags = availableTags.filter(t => t !== 'nsfw');
   regularTags.forEach(tag => {
@@ -132,7 +147,11 @@ async function loadRuns() {
     totalPages = data.pages;
 
     if (data.runs.length === 0) {
-      contentEl.innerHTML = '<div class="empty-state">No generations yet. Go create something!</div>';
+      const hasFilters = selectedTags.size > 0 || currentFilter !== 'all';
+      const message = hasFilters
+        ? 'No results match your filters. Try clearing filters or changing filter options.'
+        : 'No generations yet. Go create something!';
+      contentEl.innerHTML = `<div class="empty-state">${message}</div>`;
       paginationEl.style.display = "none";
       return;
     }
