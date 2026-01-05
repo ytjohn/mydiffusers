@@ -57,36 +57,52 @@ def randomSeed():
 
 
 def batman_prompt_factory() -> str:
-    """Generate varied Batman scenarios using mix-and-match actions and locations.
+    """Generate varied Batman scenarios using mix-and-match with character injection.
 
     Prompt content/length doesn't affect timing (verified), but adds visual variety.
-    Combines random actions with random locations for exponential variety.
+    Combines action templates, locations, characters, and photo/animation style.
     """
-    actions = [
+    villains = [
+        "the Joker", "Bane", "Scarecrow", "Two-Face", "Penguin", "Catwoman",
+        "Riddler", "Poison Ivy", "Mr. Freeze", "Harley Quinn", "Ra's al Ghul",
+        "Clayface", "Killer Croc", "Mad Hatter", "Black Mask"
+    ]
+
+    allies = [
+        "Robin", "Nightwing", "Batgirl", "Commissioner Gordon", "Alfred",
+        "Oracle", "Red Hood", "Red Robin"
+    ]
+
+    # Action templates - {villain}, {ally}, {villain2} will be substituted
+    action_templates = [
         "batman swinging on a grappling hook",
-        "batman confronting the Joker",
+        "batman confronting {villain}",
         "batman standing watching over the city",
         "batman investigating a crime scene",
         "batman driving the Batmobile at high speed",
-        "batman fighting Bane",
-        "batman meeting Commissioner Gordon",
+        "batman fighting {villain}",
+        "batman meeting {ally}",
         "batman infiltrating past security guards",
         "batman gliding with his cape spread",
         "batman working on computer screens",
-        "batman facing off against Scarecrow",
-        "batman rescuing hostages from Two-Face",
-        "batman pursuing Catwoman",
+        "batman facing off against {villain}",
+        "batman rescuing {ally} from {villain}",
+        "batman pursuing {villain}",
         "batman analyzing forensic evidence",
-        "batman defending against intruders",
-        "batman hacking on a computer while fending off villain distractions",
-        "batman training with advanced equipment",
+        "batman defending {ally} from {villain}",
+        "batman working alongside {ally}",
+        "batman training {ally}",
         "batman standing in the rain",
         "batman examining the Bat-Signal",
-        "batman confronting Penguin",
-        "batman disarming a bomb",
-        "batman interrogating a criminal",
-        "batman emerging from shadows",
-        "batman riding the Batcycle at high speed",
+        "batman interrogating {villain}",
+        "batman disarming a bomb planted by {villain}",
+        "batman emerging from shadows while {villain} escapes",
+        "batman riding the Batcycle in pursuit of {villain}",
+        "batman coordinating with {ally}",
+        "batman treating an injured {ally}",
+        "batman confronting {villain} while {villain2} runs away",
+        "batman and {ally} cornering {villain}",
+        "batman protecting {ally} from {villain}",
     ]
 
     locations = [
@@ -116,13 +132,24 @@ def batman_prompt_factory() -> str:
         "through narrow city alleys",
     ]
 
-    action = random.choice(actions)
+    # Select action template and substitute characters
+    action = random.choice(action_templates)
+
+    # Inject characters into template
+    if "{villain}" in action:
+        action = action.replace("{villain}", random.choice(villains), 1)
+    if "{villain2}" in action:
+        action = action.replace("{villain2}", random.choice(villains))
+    if "{ally}" in action:
+        action = action.replace("{ally}", random.choice(allies))
+
     location = random.choice(locations)
+    photo_or_aninmation = random.choice(["photo", "animation"])
 
     # Consistent style suffix for quality
     style = "dramatic lighting, high detail, intricate, sharp focus, digital art"
 
-    return f"dc comics animation realistic style. {action} {location}. {style}"
+    return f"dc comics {photo_or_aninmation} realistic style. {action} {location}. {style}"
 
 @dataclass
 class BenchmarkConfig:
